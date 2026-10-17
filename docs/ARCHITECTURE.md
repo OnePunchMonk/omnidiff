@@ -70,7 +70,10 @@ clean token from model logits; already decoded tokens are carried forward. Its
 log-prob includes both categorical and unmask/stay Bernoulli terms. `prefix`
 positions are fixed. The optional `coupled` sampler draws unmask times and
 Gumbel or inverse-CDF uniform noise once, making the ancestral law a
-deterministic function of trajectory noise.
+deterministic function of trajectory noise. `sample()` merges `process.init_noise`
+into `cond`, preserving existing noise values; `step()` passes `cond` only to coupled
+transitions, which return `log_prob=None`, so coupled rollouts cannot be RL-scored.
+`TokenAdapter(noise_dim>0)` reads `cond["token_noise"]`.
 
 ### Model contract
 
@@ -93,7 +96,7 @@ predict a jump from `t` to `s`, used by flow maps. Its output layer is
 zero-initialised, so loading one-time weights leaves the two-time model
 initially equivalent to the original. `time_scale` controls both timestep
 embeddings. No shipped teacher uses a smaller scale; every image method in the
-distillation results does better with a `time_scale: 10` teacher
+distillation results does better with a `time_scale: 10` teacher (DMD2 at 1-2 steps is the exception)
 (`docs/results/distillation_toy.md`). Use `time_scale: 10` for new continuous
 teachers, while shipped configs retain 1000 so the published tables reproduce.
 `flow_map` warns above 100; `rcm` does not add that warning. JVP-based methods
@@ -233,8 +236,11 @@ prefixes; `student_spec` customizes the student model, `setup` adds roles/state,
 `default_grid` chooses the grid, `schedule` chooses roles, `loss(role, tr)`
 returns `(loss, metrics)`, and `after_update` updates method state. The config
 `distill.student_process` is merged over method defaults and exported. The
-trainer exposes `tr.process` for the unclipped process used in losses and
-`tr.student_process` for rollout, evaluation and export. Shared helpers include
+trainer exposes `tr.process`, which carries the teacher's process settings and is
+used by most losses, and `tr.student_process`, which carries the student's sampler
+and `student_process` settings and is used for rollout, evaluation, export and
+DMD2's generator x0 (so `clip_x0` affects DMD2 training but only the sampler for
+consistency and KD). Shared helpers include
 `teacher_pred`, `student_pred`, `prompt_cond`, `student_rollout`, and
 `tr.data.batch`. `eval_student` swaps in the student EMA; `export` merges LoRA
 and stores the student sampler/grid.
@@ -260,8 +266,8 @@ records teacher/method/guidance provenance.
 ## Extension recipes
 
 - **Process:** subclass `DiffusionProcess` (or `ContinuousProcess`), implement
-  its abstract methods and register it in `core/processes/<name>.py` under
-  `PROCESSES`; add exact transition/`kl` tests like `test_processes.py`.
+  its abstract methods and register it under `PROCESSES` from a plugin module
+  (a `plugins:` entry or an entry point, see `examples/custom_plugin.py`; `type: pkg.mod:Name` needs no registration); add exact transition/`kl` tests like `test_processes.py`.
 - **Model:** prefer a plugin module (loaded through the config `plugins:` key or
   an installed entry point), then supply an adapter/backbone/conditioner and
   select it in `model`. See `examples/custom_plugin.py`. A
@@ -306,12 +312,8 @@ The tests pin the contracts that the architecture relies on:
   `test_math_attention_matches_sdpa_and_supports_jvp`,
   `test_token_adapter_noise_projection_starts_at_zero`.
 - Coupled masked sampling preserves ancestral statistics and same noise gives
-  same output. `sample()` merges `process.init_noise` into `cond`, preserving
-  existing noise values; `step()` passes `cond` only to coupled transitions.
-  Coupled transitions return `log_prob=None`, so coupled rollouts cannot be
-  RL-scored. `TokenAdapter(noise_dim>0)` reads `cond["token_noise"]`:
-  `test_coupled_masked_sampler_matches_ancestral_statistics` and
-  `test_token_adapter_noise_projection_starts_at_zero`.
+  same output: `test_coupled_masked_sampler_matches_ancestral_statistics`;
+  a noise projection starts at zero: `test_token_adapter_noise_projection_starts_at_zero`.
 - RL-tunable renoise students and runtime plugin construction:
   `test_renoise_student_is_rl_tunable`, `test_plugin_components_from_config`.
 - A fresh RL rollout rescored with the same policy is on-policy:
