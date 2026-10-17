@@ -159,3 +159,10 @@ def test_malformed_sampler_json_is_rejected(good_meta, edit, match):
     (bundle / "sampler.json").write_text(json.dumps(meta))
     with pytest.raises(ValueError, match=match):
         load_bundle(bundle)
+
+
+def test_export_refuses_to_overwrite_a_checkpoint(teachers):
+    ckpt = teachers("image_flow_grpo")
+    with pytest.raises(ValueError, match="checkpoint"):
+        export_bundle(ckpt, ckpt)
+    assert (Path(ckpt) / "model.pt").exists()

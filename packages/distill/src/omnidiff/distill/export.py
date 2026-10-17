@@ -44,7 +44,8 @@ Optional: `distilled_from` (teacher, method, teacher_guidance, steps), `plugins`
 
 Time runs from t=1 (pure noise / all mask) to t=0 (data). The model is called as `model(x, t, cond)`; a
 `two_time` model (see model.json) is called as `model(x, t, cond, s=...)` where s is the target time of the
-jump: the next grid time for ode/coupled, 0 for renoise (jump to data, then re-noise to the next time).
+jump: 0 for flow/gaussian renoise (jump to data, then re-noise to the next time), otherwise the next grid
+time (including masked, where renoise is ancestral).
 Prediction target: `flow` velocity (noise - x0), `gaussian` epsilon, `masked` logits over clean tokens.
 Prior: Gaussian noise for flow/gaussian; all-mask tokens for masked. The `coupled` sampler also needs
 `cond["unmask_time"]` (B, L) and `cond["token_noise"]` (B, L) uniform or (B, L, V) Gumbel, drawn by
@@ -115,6 +116,8 @@ def validate_sampler(meta: dict) -> None:
 
 def export_bundle(ckpt, out) -> Path:
     ckpt, out = Path(ckpt), Path(out)
+    if out.resolve() == ckpt.resolve() or (out / CONFIG).exists():
+        raise ValueError(f"{out} is an omnidiff checkpoint; export into a separate directory")
     cfg = load_config(ckpt / CONFIG)
     pipe = Pipeline.from_checkpoint(ckpt, device="cpu")
     # Pipeline builds the plain architecture (no LoRA wrappers) and checkpoints already store merged
@@ -135,6 +138,8 @@ def export_bundle(ckpt, out) -> Path:
     def bring(path: str) -> str:
         if path not in copied:
             src = Path(path)
+            if not src.is_file():
+                raise ValueError(f"resource path {path!r} must name a file")
             dst = f"{RESOURCES}/{len(copied)}_{src.name}"
             (out / RESOURCES).mkdir(exist_ok=True)
             shutil.copyfile(src, out / dst)
@@ -160,6 +165,7 @@ def export_bundle(ckpt, out) -> Path:
             df["teacher"] = _teacher_name(str(df["teacher"]))
         sampler_json["distilled_from"] = df
 
+    validate_sampler({**_plain(sampler_json), "weights": {"file": "", "format": "torch", "sha256": ""}})
     # Exactly one weights file per bundle: a re-export must not leave the other format behind.
     for name in (SAFETENSORS, TORCH_WEIGHTS):
         (out / name).unlink(missing_ok=True)
