@@ -3,22 +3,29 @@
 ``samples`` is decoded data (numpy in [0, 1] for pixels, a list of str for
 text). The built-ins are cheap toy objectives; real reward models (aesthetic
 predictors, VLM judges, verifiers) are registered the same way.
+
+A reward that is differentiable also defines ``torch_call(x, prompts=None)``: the
+same function on a torch tensor in [0, 1], returning a (B,) tensor that keeps the
+autograd graph, and sets ``differentiable = True``. Methods that need reward gradients (``dmd2_reward``) use it.
 """
 
 from __future__ import annotations
 
 import numpy as np
+import torch
 
 from omnidiff.core.registry import REWARDS
 
 
-def _per_sample_mean(x: np.ndarray) -> np.ndarray:
+def _per_sample_mean(x: np.ndarray | torch.Tensor) -> np.ndarray | torch.Tensor:
     return x.reshape(x.shape[0], -1).mean(1)
 
 
 @REWARDS.register("channel_dominance")
 class ChannelDominance:
     """Mean of one colour channel minus the mean of the others ("make it red" for channel 0)."""
+
+    differentiable = True
 
     def __init__(self, channel: int = 0):
         self.channel = channel
@@ -28,10 +35,16 @@ class ChannelDominance:
         others = np.delete(x, self.channel, axis=1)
         return _per_sample_mean(x[:, self.channel]) - _per_sample_mean(others)
 
+    def torch_call(self, x: torch.Tensor, prompts=None) -> torch.Tensor:
+        keep = [c for c in range(x.shape[1]) if c != self.channel]
+        return _per_sample_mean(x[:, self.channel]) - _per_sample_mean(x[:, keep])
+
 
 @REWARDS.register("brightness")
 class Brightness:
     """Mean intensity, or closeness to ``target`` if given."""
+
+    differentiable = True
 
     def __init__(self, target: float | None = None):
         self.target = target
@@ -40,13 +53,22 @@ class Brightness:
         m = _per_sample_mean(np.asarray(samples))
         return m if self.target is None else -np.abs(m - self.target)
 
+    def torch_call(self, x: torch.Tensor, prompts=None) -> torch.Tensor:
+        m = _per_sample_mean(x)
+        return m if self.target is None else -(m - self.target).abs()
+
 
 @REWARDS.register("temporal_smoothness")
 class TemporalSmoothness:
     """Negative mean absolute frame difference for videos (B, C, T, H, W)."""
 
+    differentiable = True
+
     def __call__(self, samples, prompts):
         return -_per_sample_mean(np.abs(np.diff(np.asarray(samples), axis=2)))
+
+    def torch_call(self, x: torch.Tensor, prompts=None) -> torch.Tensor:
+        return -_per_sample_mean(torch.diff(x, dim=2).abs())
 
 
 @REWARDS.register("char_fraction")
@@ -83,3 +105,10 @@ class Composite:
 
     def __call__(self, samples, prompts):
         return sum(w * np.asarray(r(samples, prompts), dtype=np.float64) for w, r in self.terms)
+
+    @property
+    def differentiable(self) -> bool:
+        return all(getattr(r, "differentiable", False) for _, r in self.terms)
+
+    def torch_call(self, x: torch.Tensor, prompts=None) -> torch.Tensor:
+        return sum(w * r.torch_call(x, prompts) for w, r in self.terms)

@@ -23,6 +23,10 @@ class PixelCodec:
     def decode(self, x: torch.Tensor) -> np.ndarray:
         return ((x.detach().float().clamp(-1, 1) + 1) / 2).cpu().numpy()
 
+    def decode_tensor(self, x: torch.Tensor) -> torch.Tensor:
+        """``decode`` that keeps the autograd graph (same clamp and shift), for reward gradients."""
+        return (x.float().clamp(-1, 1) + 1) / 2
+
 
 class ByteTokenizer:
     """UTF-8 bytes plus EOS (also padding) and MASK. Any object with these attributes and methods can replace it."""

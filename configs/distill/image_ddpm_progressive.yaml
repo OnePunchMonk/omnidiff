@@ -1,0 +1,15 @@
+# Progressive distillation on the Gaussian (VP, epsilon) teacher: 16 -> 8 -> 4 -> 2 steps. The loss is in x0 space; weighting: snr makes it
+# the eps-space MSE (the paper's max(SNR, 1) lets t = 1 dominate for an eps network). Training is unclipped; sampling clips x0 to [-1, 1].
+seed: 0
+device: auto
+output_dir: runs/distill/image_ddpm_progressive
+teacher: runs/image_ddpm_ddpo/sft/final     # produced by: omnidiff sft -c configs/image_ddpm_ddpo.yaml
+
+distill:
+  method: {type: progressive, start_steps: 16, rounds: 3, weighting: snr}
+  student_process: {clip_x0: 1.0}
+  data: teacher
+  steps: 2400
+  batch_size: 32
+  lr: 5e-5
+  eval_every: 600
