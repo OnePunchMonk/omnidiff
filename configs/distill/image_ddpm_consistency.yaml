@@ -1,0 +1,15 @@
+# Consistency distillation (iCT-style: stop-gradient target, pseudo-Huber), sampled with 4 renoise steps.
+seed: 0
+device: auto
+output_dir: runs/distill/image_ddpm_consistency
+teacher: runs/image_ddpm_ddpo/sft/final     # produced by: omnidiff sft -c configs/image_ddpm_ddpo.yaml
+
+distill:
+  method: {type: consistency, num_intervals: 32, target: stopgrad}
+  student_process: {clip_x0: 1.0}
+  student_steps: 4
+  data: teacher
+  steps: 2000
+  batch_size: 64
+  lr: 1e-4
+  eval_every: 500
