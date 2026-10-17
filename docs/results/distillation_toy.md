@@ -41,7 +41,7 @@ Same RL budget for every arm (40 epochs, LoRA rank 8, no KL). Scored at 4 steps 
 
 ## Open issues
 
-- **Flow-map objective:** check the adaptive weighting, the t/s sampling and the training length on long jumps. Compare the JVP and finite-difference variants at scale.
+- **Flow-map objective.** This is not a dead-parameter bug: the s-embedding's output layer moved from 0 to norm 0.97. But the MeanFlow residual stayed at 2.4–3.0 for all 2000 steps. At initialisation the residual is (t - s)^2 |dv/dt|^2, which says the teacher's velocity field is strongly curved on this toy. Next: a curriculum on the gap t - s (start near 0 and widen), many more steps, and a JVP-versus-finite-difference comparison once it fits.
 - **DMD2's best step count differs from its trained grid:** investigate backward simulation and the grid.
 - **Scale up `coupled_kd`.** On real tokenizers the per-token Gumbel input is V-dimensional, so it needs a low-rank or top-k encoding of the noise.
 - **Seeds and confidence intervals** before any of this is stated more strongly.
