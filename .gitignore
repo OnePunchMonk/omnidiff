@@ -6,3 +6,4 @@ runs/
 *.npz
 .venv/
 uv.lock.bak
+.claude/
