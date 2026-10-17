@@ -273,14 +273,16 @@ def _rng_probe(tr):
         tr.rng.bit_generator.state = trainer_state
 
 
-@pytest.mark.parametrize("name", ["image_flow_kd", "image_flow_dmd2", "text_masked_sdtt",
-                                   "image_flow_consistency", "image_flow_rcm"])
+@pytest.mark.parametrize("name", ["image_flow_kd", "image_flow_dmd2", "image_flow_dmd2_reward", "text_masked_dcd",
+                                   "text_masked_sdtt", "image_flow_consistency", "image_flow_rcm"])
 def test_distill_save_resume_is_bit_identical(name, teachers, tmp_path):
     extra = ["distill.steps=4", "distill.log_every=100", "distill.eval_every=0"]
     if name == "image_flow_dmd2":
         extra.append("distill.method.fake_updates=1")
     if name == "image_flow_consistency":
         extra.append("distill.method.target=ema")
+    if name == "image_flow_dmd2_reward":
+        extra.extend(["distill.method.fake_updates=1", "distill.method.reward_weight=0.7"])
 
     full = _trainer(teachers, tmp_path / "full", name, *extra)
     full.train()
@@ -415,6 +417,40 @@ def test_progressive_training_ends_on_the_last_rounds_grid(teachers, tmp_path):
     tr.train()
     assert tr.method.round == tr.method.rounds - 1
     assert torch.equal(tr.grid, tr.method.grid(tr, tr.method.rounds - 1)) and len(tr.grid) == 3
+
+
+@pytest.mark.parametrize("split", [1, 2], ids=["mid_round", "round_boundary"])
+def test_progressive_save_resume_is_bit_identical(split, teachers, tmp_path):
+    """A checkpoint preserves both progressive round state and the grid at either split point."""
+    extra = ["distill.steps=6", "distill.method.rounds=3", "distill.log_every=100", "distill.eval_every=0"]
+    full = _trainer(teachers, tmp_path / "full", "image_flow_progressive", *extra)
+    full.train()
+    full_roles = {name: {"model": copy.deepcopy(role.model.state_dict()),
+                         "optimizer": copy.deepcopy(role.optimizer.state_dict()),
+                         "ema": None if role.ema is None else copy.deepcopy(role.ema.shadow)}
+                  for name, role in full.roles.items()}
+    full_method = copy.deepcopy(full.method.state_dict())
+    full_grid = full.grid.clone()
+    full_rng = _rng_probe(full)
+
+    split_tr = _trainer(teachers, tmp_path / "split", "image_flow_progressive", *extra)
+    split_tr.dc.steps = split
+    split_tr.train()
+    state = split_tr.save_state(split_tr.out_dir / "state")
+    torch.load(state / "state.pt", map_location="cpu", weights_only=True)
+    resumed_cfg = distill_config(ROOT / "configs" / "distill" / "image_flow_progressive.yaml", teachers,
+                                  tmp_path / "split", *extra, f"distill.resume_from={state}")
+    resumed = DistillTrainer(resumed_cfg)
+    resumed.train()
+
+    resumed_roles = {name: {"model": role.model.state_dict(),
+                            "optimizer": role.optimizer.state_dict(),
+                            "ema": None if role.ema is None else role.ema.shadow}
+                     for name, role in resumed.roles.items()}
+    _assert_nested_equal(full_roles, resumed_roles)
+    _assert_nested_equal(full_method, resumed.method.state_dict())
+    _assert_nested_equal(full_grid, resumed.grid)
+    _assert_nested_equal(full_rng, _rng_probe(resumed))
 
 
 def test_progressive_validates_steps_and_grid_overrides(teachers, tmp_path):

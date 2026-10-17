@@ -371,7 +371,8 @@ class DistillTrainer:
             "data_kind": self.data.kind,
         }
         torch.save({"version": 2, "metadata": metadata, "iteration": self.iteration, "roles": roles,
-                    "data": data, "method": _safe_encode(self.method.state_dict()), "rng": rng}, state_path)
+                    "data": data, "method": _safe_encode(self.method.state_dict()),
+                    "grid": _safe_encode(self.grid), "rng": rng}, state_path)
         return path
 
     def load_state(self, path) -> None:
@@ -421,6 +422,8 @@ class DistillTrainer:
         else:
             self.data.load_state_dict(_safe_decode(data.get("state", {})))
         self.method.load_state_dict(_safe_decode(state.get("method", {})))
+        if "grid" in state:
+            self.grid = _safe_decode(state["grid"]).to(self.device)
         self.iteration = int(state["iteration"])
         rng = state["rng"]
         random.setstate(_safe_decode(rng["python"]))
