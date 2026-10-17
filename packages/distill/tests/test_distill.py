@@ -1,6 +1,7 @@
 import copy
 import random
 from pathlib import Path
+from unittest.mock import patch
 
 import numpy as np
 import pytest
@@ -312,6 +313,70 @@ def test_distill_save_resume_is_bit_identical(name, teachers, tmp_path):
     _assert_nested_equal(full_rng, _rng_probe(resumed))
 
 
+def test_sdtt_mid_round_save_resume_is_bit_identical(teachers, tmp_path):
+    """The SDTT round teacher must be restored after the second round has started."""
+    extra = ["distill.steps=6", "distill.method.rounds=2", "distill.log_every=100", "distill.eval_every=0"]
+    full = _trainer(teachers, tmp_path / "full", "text_masked_sdtt", *extra)
+    full_ckpt = full.train()
+    full_roles = {name: {"model": copy.deepcopy(role.model.state_dict()),
+                         "optimizer": copy.deepcopy(role.optimizer.state_dict()),
+                         "ema": None if role.ema is None else copy.deepcopy(role.ema.shadow)}
+                  for name, role in full.roles.items()}
+    full_method = copy.deepcopy(full.method.state_dict())
+
+    split = _trainer(teachers, tmp_path / "split", "text_masked_sdtt", *extra)
+    split.dc.steps = 4
+    split.train()
+    state = split.save_state(split.out_dir / "state")
+    resumed_cfg = distill_config(ROOT / "configs" / "distill" / "text_masked_sdtt.yaml", teachers,
+                                  tmp_path / "split", *extra, f"distill.resume_from={state}")
+    resumed = DistillTrainer(resumed_cfg)
+    resumed_ckpt = resumed.train()
+
+    resumed_roles = {name: {"model": role.model.state_dict(),
+                            "optimizer": role.optimizer.state_dict(),
+                            "ema": None if role.ema is None else role.ema.shadow}
+                     for name, role in resumed.roles.items()}
+    _assert_nested_equal(full_roles, resumed_roles)
+    _assert_nested_equal(full_method, resumed.method.state_dict())
+    assert load_config(full_ckpt / "config.yaml")["sampling"]["timesteps"] == \
+        load_config(resumed_ckpt / "config.yaml")["sampling"]["timesteps"]
+
+
+def test_save_state_every_resume_uses_checkpoint_written_inside_train(teachers, tmp_path):
+    extra = ["distill.steps=4", "distill.log_every=100", "distill.eval_every=0", "distill.save_state_every=2"]
+    full = _trainer(teachers, tmp_path / "full", "image_flow_kd", *extra)
+    full.train()
+    split = _trainer(teachers, tmp_path / "split", "image_flow_kd", *extra)
+    split.dc.steps = 2
+    split.train()
+    state = split.out_dir / "state"
+    assert (state / "state.pt").exists()
+    payload = torch.load(state / "state.pt", map_location="cpu", weights_only=True)
+    assert payload["version"] == 1
+    assert not (state / "state.pt.tmp").exists()
+
+    resumed_cfg = distill_config(ROOT / "configs" / "distill" / "image_flow_kd.yaml", teachers,
+                                  tmp_path / "split", *extra, f"distill.resume_from={state}")
+    resumed = DistillTrainer(resumed_cfg)
+    resumed.train()
+    for name, role in full.roles.items():
+        _assert_nested_equal(role.model.state_dict(), resumed.roles[name].model.state_dict())
+
+
+def test_resume_builds_teacher_pool_from_saved_tensors(teachers, tmp_path):
+    extra = ["distill.steps=3", "distill.log_every=100", "distill.eval_every=0"]
+    split = _trainer(teachers, tmp_path / "split", "image_flow_kd", *extra)
+    split.dc.steps = 1
+    split.train()
+    state = split.save_state(split.out_dir / "state")
+    resumed_cfg = distill_config(ROOT / "configs" / "distill" / "image_flow_kd.yaml", teachers,
+                                  tmp_path / "split", *extra, f"distill.resume_from={state}")
+    with patch("omnidiff.distill.trainer.TeacherPool._generate", side_effect=AssertionError("pool regenerated")):
+        resumed = DistillTrainer(resumed_cfg)
+    assert torch.equal(resumed.data.states, split.data.states)
+
+
 def test_ema_swap_restores_weights():
     model = torch.nn.Linear(3, 3)
     ema = EMA(model, 0.5)
@@ -419,12 +484,12 @@ def test_progressive_training_ends_on_the_last_rounds_grid(teachers, tmp_path):
     assert torch.equal(tr.grid, tr.method.grid(tr, tr.method.rounds - 1)) and len(tr.grid) == 3
 
 
-@pytest.mark.parametrize("split", [1, 2], ids=["mid_round", "round_boundary"])
+@pytest.mark.parametrize("split", [3, 5], ids=["mid_round_1", "final_round"])
 def test_progressive_save_resume_is_bit_identical(split, teachers, tmp_path):
     """A checkpoint preserves both progressive round state and the grid at either split point."""
     extra = ["distill.steps=6", "distill.method.rounds=3", "distill.log_every=100", "distill.eval_every=0"]
     full = _trainer(teachers, tmp_path / "full", "image_flow_progressive", *extra)
-    full.train()
+    full_ckpt = full.train()
     full_roles = {name: {"model": copy.deepcopy(role.model.state_dict()),
                          "optimizer": copy.deepcopy(role.optimizer.state_dict()),
                          "ema": None if role.ema is None else copy.deepcopy(role.ema.shadow)}
@@ -441,7 +506,7 @@ def test_progressive_save_resume_is_bit_identical(split, teachers, tmp_path):
     resumed_cfg = distill_config(ROOT / "configs" / "distill" / "image_flow_progressive.yaml", teachers,
                                   tmp_path / "split", *extra, f"distill.resume_from={state}")
     resumed = DistillTrainer(resumed_cfg)
-    resumed.train()
+    resumed_ckpt = resumed.train()
 
     resumed_roles = {name: {"model": role.model.state_dict(),
                             "optimizer": role.optimizer.state_dict(),
@@ -451,6 +516,8 @@ def test_progressive_save_resume_is_bit_identical(split, teachers, tmp_path):
     _assert_nested_equal(full_method, resumed.method.state_dict())
     _assert_nested_equal(full_grid, resumed.grid)
     _assert_nested_equal(full_rng, _rng_probe(resumed))
+    assert load_config(full_ckpt / "config.yaml")["sampling"]["timesteps"] == \
+        load_config(resumed_ckpt / "config.yaml")["sampling"]["timesteps"]
 
 
 def test_progressive_validates_steps_and_grid_overrides(teachers, tmp_path):

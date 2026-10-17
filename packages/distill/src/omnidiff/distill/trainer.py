@@ -17,6 +17,7 @@ import contextlib
 import copy
 import hashlib
 import json
+import os
 import random
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -32,7 +33,7 @@ from omnidiff.core.nn.lora import apply_lora, merged_state_dict
 from omnidiff.core.processes.base import ContinuousProcess
 from omnidiff.core.registry import DATASETS, DISTILLERS, load_plugins
 from omnidiff.core.sampling import predict, sample, step
-from omnidiff.core.utils import (CONFIG, JsonlLogger, index_cond, load_weights, make_generator, resolve_device,
+from omnidiff.core.utils import (CONFIG, WEIGHTS, JsonlLogger, index_cond, load_weights, make_generator, resolve_device,
                                  save_checkpoint, seed_everything)
 
 
@@ -149,8 +150,15 @@ class TeacherPool:
     Teacher states are also recorded on the student's grid, which trajectory methods (KD) regress from.
     """
 
-    def __init__(self, tr: "DistillTrainer", size: int):
+    def __init__(self, tr: "DistillTrainer", size: int, saved_state=None):
         self.kind = "teacher"
+        self.rng = tr.rng
+        if saved_state is not None:
+            self._load_state(saved_state, tr.device)
+            return
+        self._generate(tr, size)
+
+    def _generate(self, tr: "DistillTrainer", size: int):
         grid = tr.grid.cpu().tolist()
         full = tr.process.timesteps(tr.dc.teacher_steps, "cpu").tolist()
         merged = sorted(set(round(t, 6) for t in full + grid), reverse=True)
@@ -168,7 +176,14 @@ class TeacherPool:
             xs.append(traj.xs[:, idx])
         self.states = torch.cat(xs)
         self.x0, self.cond, self.prompts = self.states[:, -1], cond, prompts
-        self.rng = tr.rng
+
+    def _load_state(self, state, device):
+        saved = _safe_decode(state)
+        self.states = saved["states"].to(device)
+        self.x0 = saved["x0"].to(device)
+        self.cond = {k: v.to(device) if isinstance(v, torch.Tensor) else v
+                     for k, v in saved["cond"].items()}
+        self.prompts = saved["prompts"]
 
     def batch(self, n: int) -> Batch:
         i = torch.as_tensor(self.rng.integers(0, len(self.x0), n), device=self.x0.device)
@@ -212,10 +227,11 @@ class DistillTrainer:
         self.device = resolve_device(cfg.get("device", "auto"))
         self.gen = make_generator(seed, self.device)
         self.out_dir = Path(cfg.get("output_dir", "runs/distill")) / "distill"
+        resume_from = resume_from if resume_from is not None else self.dc.resume_from
+        resume_state = self._read_state(resume_from) if resume_from is not None else None
 
         teacher_path = Path(cfg["teacher"])
-        teacher_weights = teacher_path / "model.pt" if teacher_path.is_dir() else teacher_path
-        self.teacher_fingerprint = hashlib.sha256(teacher_weights.read_bytes()).hexdigest()
+        self.teacher_weights = teacher_path / WEIGHTS if teacher_path.is_dir() else teacher_path
         self.teacher_cfg = load_config(teacher_path / CONFIG)
         self.c = build(self.teacher_cfg, self.device)
         self.process, self.shape = self.c.process, self.c.sample_shape
@@ -253,11 +269,17 @@ class DistillTrainer:
         self.roles: dict[str, Role] = {}
         self.add_role("student", self.student, ema_decay=self.dc.ema_decay)
 
-        self.data = TeacherPool(self, self.dc.pool_size) if self.dc.data == "teacher" else DatasetSource(self, self.dc.data)
+        saved_data = resume_state.get("data") if isinstance(resume_state, dict) else None
+        pool_state = saved_data if isinstance(saved_data, dict) and saved_data.get("kind") == "teacher" else None
+        self.data = (TeacherPool(self, self.dc.pool_size, pool_state) if self.dc.data == "teacher"
+                     else DatasetSource(self, self.dc.data))
         self.method.setup(self)
         method_spec = self.dc.method if isinstance(self.dc.method, dict) else {"type": self.dc.method}
         signature_distill = copy.deepcopy(cfg.get("distill") or {})
-        for key in ("resume_from", "save_every", "save_state_every"):
+        # Keep `steps` in the signature: progressive/SDTT round lengths depend on it,
+        # so changing steps across a resume is intentionally refused. Logging and
+        # evaluation cadence do not affect the training trajectory.
+        for key in ("resume_from", "save_every", "save_state_every", "log_every", "eval_every", "eval_n"):
             signature_distill.pop(key, None)
         self.trajectory_signature = _canonical_json({
             "distill": signature_distill,
@@ -265,9 +287,8 @@ class DistillTrainer:
             "student_process": {"sampler": self.student_sampler, "settings": self.student_settings},
         })
         self.trajectory_signature_sha256 = hashlib.sha256(self.trajectory_signature.encode()).hexdigest()
-        resume_from = resume_from if resume_from is not None else self.dc.resume_from
         if resume_from is not None:
-            self.load_state(resume_from)
+            self.load_state(resume_from, resume_state)
 
     # ---- construction helpers -------------------------------------------------------------------
     def _with_sampler(self, sampler: str):
@@ -333,6 +354,17 @@ class DistillTrainer:
         path = Path(path)
         return path if path.suffix == ".pt" else path / "state.pt"
 
+    @staticmethod
+    def _read_state(path):
+        return torch.load(DistillTrainer._state_path(path), map_location="cpu", weights_only=True)
+
+    def _teacher_fingerprint(self) -> str:
+        digest = hashlib.sha256()
+        with self.teacher_weights.open("rb") as f:
+            while chunk := f.read(1024 * 1024):
+                digest.update(chunk)
+        return digest.hexdigest()
+
     def save_state(self, path) -> Path:
         """Save the complete state needed to continue the same training stream."""
         path = Path(path)
@@ -365,27 +397,29 @@ class DistillTrainer:
         if torch.cuda.is_available():
             rng["cuda"] = _safe_encode(torch.cuda.get_rng_state_all())
         metadata = {
-            "teacher_sha256": self.teacher_fingerprint,
+            "teacher_sha256": self._teacher_fingerprint(),
             "trajectory_signature": self.trajectory_signature,
             "trajectory_signature_sha256": self.trajectory_signature_sha256,
             "data_kind": self.data.kind,
         }
-        torch.save({"version": 2, "metadata": metadata, "iteration": self.iteration, "roles": roles,
+        tmp_path = state_path.with_name(state_path.name + ".tmp")
+        torch.save({"version": 1, "metadata": metadata, "iteration": self.iteration, "roles": roles,
                     "data": data, "method": _safe_encode(self.method.state_dict()),
-                    "grid": _safe_encode(self.grid), "rng": rng}, state_path)
+                    "grid": _safe_encode(self.grid), "rng": rng}, tmp_path)
+        os.replace(tmp_path, state_path)
         return path
 
-    def load_state(self, path) -> None:
+    def load_state(self, path, state=None) -> None:
         """Load a state saved by :meth:`save_state`."""
-        state_path = self._state_path(path)
-        state = torch.load(state_path, map_location="cpu", weights_only=True)
+        state = self._read_state(path) if state is None else state
         metadata = state.get("metadata")
         if not isinstance(metadata, dict):
             raise ValueError("checkpoint has no safe distillation metadata; cannot verify resume compatibility")
         saved_teacher = metadata.get("teacher_sha256")
-        if saved_teacher != self.teacher_fingerprint:
+        current_teacher = self._teacher_fingerprint()
+        if saved_teacher != current_teacher:
             raise ValueError("teacher fingerprint mismatch: checkpoint teacher_sha256 "
-                             f"{saved_teacher!r}, current teacher_sha256 {self.teacher_fingerprint!r}")
+                             f"{saved_teacher!r}, current teacher_sha256 {current_teacher!r}")
         saved_signature = metadata.get("trajectory_signature_sha256")
         if saved_signature != self.trajectory_signature_sha256:
             raise ValueError("trajectory config signature mismatch: checkpoint "
@@ -413,15 +447,10 @@ class DistillTrainer:
                 device = next(role.model.parameters()).device
                 role.ema.shadow = {k: v.to(device) for k, v in saved["ema"]["shadow"].items()}
         if isinstance(self.data, TeacherPool):
-            saved_data = _safe_decode(data)
-            self.data.states = saved_data["states"].to(self.device)
-            self.data.x0 = saved_data["x0"].to(self.device)
-            self.data.cond = {k: v.to(self.device) if isinstance(v, torch.Tensor) else v
-                              for k, v in saved_data["cond"].items()}
-            self.data.prompts = saved_data["prompts"]
+            self.data._load_state(data, self.device)
         else:
             self.data.load_state_dict(_safe_decode(data.get("state", {})))
-        self.method.load_state_dict(_safe_decode(state.get("method", {})))
+        self.method.load_state_dict(_safe_decode(state.get("method", {})), self)
         if "grid" in state:
             self.grid = _safe_decode(state["grid"]).to(self.device)
         self.iteration = int(state["iteration"])

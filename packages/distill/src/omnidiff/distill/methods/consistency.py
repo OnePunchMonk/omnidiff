@@ -41,7 +41,7 @@ class ConsistencyDistillation(Distiller):
     def state_dict(self):
         return {"target_model": None if self.target_model is None else self.target_model.state_dict()}
 
-    def load_state_dict(self, state):
+    def load_state_dict(self, state, tr=None):
         target = state.get("target_model")
         if target is not None:
             if self.target_model is None:

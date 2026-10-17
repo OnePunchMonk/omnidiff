@@ -31,7 +31,7 @@ class Distiller:
         """Return method-owned state that is not part of a trainer role."""
         return {}
 
-    def load_state_dict(self, state: dict) -> None:
+    def load_state_dict(self, state: dict, tr=None) -> None:
         """Restore method-owned state that is not part of a trainer role."""
         pass
 

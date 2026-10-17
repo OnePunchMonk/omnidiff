@@ -49,7 +49,7 @@ class DiscreteConsistency(Distiller):
     def state_dict(self):
         return {"target": self.target.state_dict()}
 
-    def load_state_dict(self, state):
+    def load_state_dict(self, state, tr=None):
         target = state.get("target")
         if target is None:
             raise ValueError("dcd checkpoint has no target state")

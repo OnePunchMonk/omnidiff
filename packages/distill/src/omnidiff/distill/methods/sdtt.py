@@ -41,7 +41,7 @@ class SelfDistillationThroughTime(Distiller):
     def state_dict(self):
         return {"round": self.round, "round_teacher": self.round_teacher.state_dict()}
 
-    def load_state_dict(self, state):
+    def load_state_dict(self, state, tr=None):
         self.round = int(state["round"])
         self.round_teacher.load_state_dict(state["round_teacher"])
 
