@@ -127,3 +127,43 @@ def test_renoise_asks_two_time_models_for_the_jump_to_data():
     seen.clear()
     sample(model, FlowMatching(sampler="ode"), (1, 2, 4, 4), {"class_ids": torch.tensor([0])}, timesteps=[1.0, 0.5, 0.0])
     assert seen == [0.5, 0.0]
+
+
+def test_coupled_masked_sampler_matches_ancestral_statistics():
+    """Coupled sampling is ancestral sampling made deterministic by up-front noise: same output law."""
+    torch.manual_seed(0)
+    V, L = 5, 3
+    logits = torch.randn(L, V)
+
+    class Fixed(torch.nn.Module):  # a 'model' whose prediction ignores its input
+        supports_guidance = False
+
+        def forward(self, x, t, cond=None, drop_cond=None):
+            return logits.expand(x.shape[0], L, V)
+
+    model = Fixed()
+    n = 20000
+    anc = sample(model, MaskedDiffusion(mask_id=V - 1), (n, L), num_steps=3, device="cpu")
+    cpl_proc = MaskedDiffusion(mask_id=V - 1, sampler="coupled", vocab_size=V)
+    cpl = sample(model, cpl_proc, (n, L), num_steps=3, device="cpu")
+    for x in (anc, cpl):
+        assert not (x == V - 1).any()
+    freq = lambda x: torch.stack([(x == v).float().mean(0) for v in range(V - 1)])  # noqa: E731
+    torch.testing.assert_close(freq(cpl), freq(anc), atol=0.02, rtol=0)
+    # same noise, same output
+    noise = cpl_proc.init_noise((4, L), "cpu")
+    a = sample(model, cpl_proc, (4, L), cond=dict(noise), num_steps=3, device="cpu")
+    b = sample(model, cpl_proc, (4, L), cond=dict(noise), num_steps=5, device="cpu")
+    torch.testing.assert_close(a, b)  # input-independent model: the step count cannot matter
+
+
+def test_token_adapter_noise_projection_starts_at_zero():
+    torch.manual_seed(0)
+    plain = build_model({"dim": 16, "adapter": "tokens", "backbone": {"type": "dit", "depth": 1, "heads": 2}},
+                        vocab_size=7, sample_shape=(5,))
+    noisy = build_model({"dim": 16, "adapter": {"type": "tokens", "noise_dim": 7},
+                         "backbone": {"type": "dit", "depth": 1, "heads": 2}}, vocab_size=7, sample_shape=(5,))
+    missing, _ = noisy.load_state_dict(plain.state_dict(), strict=False)
+    assert all(k.startswith("adapter.noise_proj.") for k in missing)
+    x, t = torch.randint(0, 6, (2, 5)), torch.tensor(0.5)
+    torch.testing.assert_close(noisy(x, t, {"token_noise": torch.randn(2, 5, 7)}), plain(x, t))

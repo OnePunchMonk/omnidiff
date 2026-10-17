@@ -41,7 +41,9 @@ class Denoiser(nn.Module):
         c = self.t_embed(t) + self.conditioner(cond or {}, B, x.device, drop_cond)
         if self.two_time:
             c = c + self.s_embed(t - (t if s is None else _per_sample(s, B, x.device)))
-        return self.backbone(self.adapter.embed(x), c)
+        noise_key = getattr(self.adapter, "noise_key", None)
+        tokens = self.adapter.embed(x, (cond or {}).get(noise_key)) if noise_key else self.adapter.embed(x)
+        return self.backbone(tokens, c)
 
     def forward(self, x, t, cond=None, drop_cond=None, s=None):
         return self.adapter.unembed(self.features(x, t, cond, drop_cond, s), x)

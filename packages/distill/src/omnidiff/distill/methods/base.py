@@ -12,8 +12,16 @@ class Distiller:
     """
 
     processes: tuple[str, ...] = ("gaussian", "flow", "masked")
-    sampler: str = "renoise"   # default student sampler for continuous processes
-    two_time: bool = False     # whether the student takes the target time s (flow maps)
+    sampler: str = "renoise"            # default student sampler for continuous processes
+    discrete_sampler: str = "ancestral"  # ... and for masked diffusion
+    teacher_sampler: str | None = None  # teacher pool sampler; default: ode / ancestral
+    two_time: bool = False              # whether the student takes the target time s (flow maps)
+    student_process_defaults: dict = {}  # process settings for the student, exported with it
+    new_param_prefixes: tuple[str, ...] = ("s_embed.",)  # student parameters the teacher does not have
+
+    def student_spec(self, spec: dict, tr) -> dict:
+        """The student's model spec, given the teacher's (plus ``two_time``)."""
+        return spec
 
     def setup(self, tr) -> None:
         pass

@@ -107,6 +107,8 @@ class TeacherPool:
         idx = [merged.index(round(t, 6)) for t in grid]
         prompts = tr.c.prompts.sample(size, tr.rng)
         cond = tr.c.prompts.encode(prompts, tr.device)
+        if getattr(tr.teacher_process, "sampler", None) == "coupled":  # keep the noise: it defines each sample
+            cond.update(tr.teacher_process.init_noise((size, *tr.shape), tr.device, tr.gen))
         xs = []
         for i in range(0, size, 256):
             sub = index_cond(cond, slice(i, i + 256))
@@ -160,19 +162,20 @@ class DistillTrainer:
         ptype = self.teacher_cfg["process"]["type"] if isinstance(self.teacher_cfg["process"], dict) else self.teacher_cfg["process"]
         if ptype not in self.method.processes:
             raise ValueError(f"{type(self.method).__name__} supports processes {self.method.processes}, not {ptype!r}")
-        self.teacher_process = self._with_sampler("ode" if self.continuous else "ancestral")
-        self.student_sampler = self.dc.sampler or (self.method.sampler if self.continuous else "ancestral")
+        self.teacher_process = self._with_sampler(self.method.teacher_sampler or ("ode" if self.continuous else "ancestral"))
+        self.student_sampler = self.dc.sampler or (self.method.sampler if self.continuous else self.method.discrete_sampler)
         self.student_process = self._with_sampler(self.student_sampler)
-        for k, v in (self.dc.student_process or {}).items():
+        self.student_settings = {**self.method.student_process_defaults, **(self.dc.student_process or {})}
+        for k, v in self.student_settings.items():
             if not hasattr(self.student_process, k):
                 raise KeyError(f"student_process: {type(self.process).__name__} has no setting {k!r}")
             setattr(self.student_process, k, v)
         self.grid = self._student_grid()
 
-        student_spec = {**self.teacher_cfg["model"], "two_time": self.method.two_time}
-        self.student = build_model(student_spec, **self.c.context).to(self.device)
+        self.student_spec = self.method.student_spec({**self.teacher_cfg["model"], "two_time": self.method.two_time}, self)
+        self.student = build_model(self.student_spec, **self.c.context).to(self.device)
         missing, unexpected = self.student.load_state_dict(self.teacher.state_dict(), strict=False)
-        if unexpected or any(not k.startswith("s_embed.") for k in missing):
+        if unexpected or any(not k.startswith(self.method.new_param_prefixes) for k in missing):
             raise RuntimeError(f"student/teacher mismatch: missing={missing} unexpected={unexpected}")
         if self.dc.lora:
             apply_lora(self.student, **self.dc.lora)
@@ -295,11 +298,11 @@ class DistillTrainer:
 
     def export(self, path) -> Path:
         cfg = copy.deepcopy(self.teacher_cfg)
-        cfg["model"] = {**cfg["model"], "two_time": self.method.two_time}
+        cfg["model"] = dict(self.student_spec)
         if isinstance(cfg["process"], str):
             cfg["process"] = {"type": cfg["process"]}
         cfg["process"]["sampler"] = self.student_sampler
-        cfg["process"].update(self.dc.student_process or {})
+        cfg["process"].update(self.student_settings)
         grid = [round(float(t), 6) for t in self.grid]
         cfg["sampling"] = {"num_steps": len(grid) - 1, "guidance_scale": 1.0, "timesteps": grid}
         cfg["distilled_from"] = {"teacher": str(self.cfg["teacher"]), "method": self.dc.method,

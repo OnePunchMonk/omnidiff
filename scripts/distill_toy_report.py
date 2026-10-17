@@ -19,7 +19,7 @@ GROUPS = {
                         "image_flow_dmd2_gan", "image_flow_rcm"],
     "image_ddpm_ddpo": ["image_ddpm_dmd2"],
     "video_flow_grpo": ["video_flow_dmd2", "video_flow_flow_map"],
-    "text_masked_grpo": ["text_masked_kd", "text_masked_sdtt"],
+    "text_masked_grpo": ["text_masked_kd", "text_masked_sdtt", "text_masked_coupled_kd"],
 }
 # Tuned baselines: the teacher with a sharper or different sampler, at the same step counts.
 VARIANTS = {

@@ -1,0 +1,17 @@
+# Noise-conditioned KD for masked diffusion: a 4-step student reproduces the 32-step teacher's
+# coupled (deterministic-given-noise) samples, so it can learn the joint dependencies that
+# parallel decoding otherwise drops.
+seed: 0
+device: auto
+output_dir: runs/distill/text_masked_coupled_kd
+teacher: runs/text_masked_grpo/sft/final     # produced by: omnidiff sft -c configs/text_masked_grpo.yaml
+
+distill:
+  method: {type: coupled_kd}
+  student_steps: 4
+  data: teacher
+  pool_size: 4096
+  steps: 3000
+  batch_size: 64
+  lr: 1e-4
+  eval_every: 1000

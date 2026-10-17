@@ -1,3 +1,4 @@
+import copy
 from pathlib import Path
 
 import pytest
@@ -167,3 +168,14 @@ def test_renoise_student_is_rl_tunable(teachers, tmp_path):
                     x_next=traj.xs[:, k + 1])
         torch.testing.assert_close(tr_k.log_prob, traj.log_probs[:, k], atol=1e-4, rtol=1e-4)
     tr.update(ro)
+
+
+def test_coupled_kd_student_starts_as_the_coupled_teacher(teachers, tmp_path):
+    """At init the noise projection is zero, so with coupled_gumbel = 1 the student is the teacher's
+    coupled sampler; the pool's samples are reproduced exactly when student and teacher share the grid."""
+    tr = _trainer(teachers, tmp_path, "text_masked_coupled_kd", "distill.student_steps=4", "distill.teacher_steps=4")
+    b = tr.data.batch(4)
+    proc = copy.copy(tr.student_process)
+    proc.coupled_gumbel = 1.0
+    out = sample(tr.student, proc, b.x0.shape, cond=b.cond, timesteps=tr.grid)
+    torch.testing.assert_close(out, b.x0)

@@ -57,9 +57,11 @@ def predict(model, x, t, cond, guidance_scale: float = 1.0, process: DiffusionPr
 def step(model, process, x_t, t, t_next, cond, guidance_scale=1.0, x_next=None, generator=None) -> Transition:
     # A two-time model is asked for the jump it takes: to t_next, or straight to data (s = 0) when
     # the sampler predicts x0 and re-noises.
-    s = torch.zeros_like(torch.as_tensor(t_next)) if getattr(process, "sampler", None) == "renoise" else t_next
+    sampler = getattr(process, "sampler", None)
+    s = torch.zeros_like(torch.as_tensor(t_next)) if sampler == "renoise" else t_next
     pred = predict(model, x_t, t, cond, guidance_scale, process, s=s)
-    return process.transition(pred, x_t, t, t_next, x_next=x_next, generator=generator)
+    kw = {"cond": cond} if sampler == "coupled" else {}
+    return process.transition(pred, x_t, t, t_next, x_next=x_next, generator=generator, **kw)
 
 
 def resolve_timesteps(process: DiffusionProcess, num_steps: int, timesteps, device) -> torch.Tensor:
@@ -84,6 +86,8 @@ def sample(model, process: DiffusionProcess, shape, cond: dict | None = None, nu
     cond = {k: v.to(device) for k, v in (cond or {}).items()}
     ts = resolve_timesteps(process, num_steps, timesteps, device)
     num_steps = len(ts) - 1
+    if getattr(process, "sampler", None) == "coupled":  # noise already in cond (e.g. a teacher pool) is kept
+        cond = {**process.init_noise(shape, device, generator), **cond}
     x = process.prior(shape, cond, device, generator)
     xs, log_probs, stochastic = [x], [], []
     for k in range(num_steps):

@@ -21,15 +21,32 @@ class MaskedDiffusion(DiffusionProcess):
 
     Prompts and infilling constraints are pre-filled positions: ``cond["prefix"]``
     is (B, L) with a token id where the position is fixed and -1 where it is free.
+
+    ``sampler: coupled`` runs the same ancestral process as a deterministic function of
+    per-trajectory noise drawn once up front: an unmask time per position (decoded on the
+    step whose interval contains it, which happens with probability (t - s) / t) and Gumbel
+    noise per position and token (argmax(log p + g) is a categorical sample). With
+    ``coupled_gumbel: 1`` the output distribution is exactly the ancestral one. Noise-conditioned
+    students read ``cond["token_noise"]`` themselves and sample with ``coupled_gumbel: 0``.
     """
 
     sampler = "ancestral"  # for masked diffusion, "predict x0 then re-mask" is exactly the ancestral step
 
     def __init__(self, mask_id: int, temperature: float = 1.0, reduction: str = "sum", t_min: float = 1e-3,
-                 sampler: str = "ancestral"):
-        if sampler not in ("ancestral", "renoise"):
+                 sampler: str = "ancestral", vocab_size: int | None = None, coupled_gumbel: float = 1.0):
+        if sampler not in ("ancestral", "renoise", "coupled"):
             raise ValueError(f"unknown sampler {sampler!r}")
         self.mask_id, self.temperature, self.reduction, self.t_min = mask_id, temperature, reduction, t_min
+        self.sampler = "ancestral" if sampler == "renoise" else sampler
+        self.vocab_size, self.coupled_gumbel = vocab_size, coupled_gumbel
+
+    def init_noise(self, shape, device, generator=None) -> dict:
+        """Noise that makes coupled sampling deterministic: ``unmask_time`` (B, L), ``token_noise`` (B, L, V)."""
+        if self.vocab_size is None:
+            raise ValueError("coupled sampling needs vocab_size")
+        unif = lambda *s: torch.rand(s, device=device, generator=generator)  # noqa: E731
+        gumbel = -torch.log(-torch.log(unif(*shape, self.vocab_size).clamp(1e-20, 1 - 1e-7)))
+        return {"unmask_time": unif(*shape), "token_noise": gumbel}
 
     def q_sample(self, x0, t, generator=None, maskable=None):
         """Mask each position with probability t (scalar or (B,)); positions outside ``maskable`` are kept."""
@@ -71,7 +88,9 @@ class MaskedDiffusion(DiffusionProcess):
         logits = logits.index_fill(-1, torch.tensor([self.mask_id], device=logits.device), float("-inf"))
         return logits.log_softmax(-1)
 
-    def transition(self, pred, x_t, t, t_next, x_next=None, generator=None):
+    def transition(self, pred, x_t, t, t_next, x_next=None, generator=None, cond=None):
+        if self.sampler == "coupled":
+            return self._coupled_transition(pred, x_t, t, t_next, cond, x_next)
         logp = self._log_probs(pred)
         is_masked = x_t == self.mask_id
         p = ((t - t_next) / t).clamp(0, 1)
@@ -86,6 +105,15 @@ class MaskedDiffusion(DiffusionProcess):
         per_tok = per_tok + stayed * (1 - p).clamp(min=1e-12).log()
         stats = {"logp": logp, "is_masked": is_masked, "p": p}
         return Transition(x_next, reduce(per_tok, self.reduction), stats)
+
+    def _coupled_transition(self, pred, x_t, t, t_next, cond, x_next=None):
+        logp = self._log_probs(pred)
+        if x_next is None:
+            tau = cond["unmask_time"]
+            decode = (x_t == self.mask_id) & (tau >= t_next) & (tau < t)
+            tokens = (logp + self.coupled_gumbel * cond["token_noise"]).argmax(-1)
+            x_next = torch.where(decode, tokens, x_t)
+        return Transition(x_next, None, {"logp": logp})
 
     def kl(self, new, ref):
         # Both policies share the unmask probability, so the step KL is the categorical

@@ -24,18 +24,28 @@ class Adapter(nn.Module):
 
 @ADAPTERS.register("tokens")
 class TokenAdapter(Adapter):
-    """Token ids (B, L) -> logits (B, L, vocab_size). Used with masked (discrete) diffusion."""
+    """Token ids (B, L) -> logits (B, L, vocab_size). Used with masked (discrete) diffusion.
 
-    def __init__(self, dim: int, vocab_size: int, sample_shape: tuple[int, ...]):
+    ``noise_dim > 0`` adds a zero-initialised projection of per-position noise (``cond["token_noise"]``),
+    for students that are a deterministic function of the sampling noise (``coupled_kd``).
+    """
+
+    def __init__(self, dim: int, vocab_size: int, sample_shape: tuple[int, ...], noise_dim: int = 0):
         super().__init__()
         (seq_len,) = sample_shape
         self.tok = nn.Embedding(vocab_size, dim)
         self.pos = nn.Parameter(torch.randn(1, seq_len, dim) * 0.02)
         self.head = nn.Linear(dim, vocab_size)
         nn.init.normal_(self.tok.weight, std=0.02)
+        self.noise_key = "token_noise" if noise_dim else None
+        if noise_dim:
+            self.noise_proj = nn.Linear(noise_dim, dim)
+            nn.init.zeros_(self.noise_proj.weight)
+            nn.init.zeros_(self.noise_proj.bias)
 
-    def embed(self, x):
-        return self.tok(x) + self.pos[:, : x.shape[1]]
+    def embed(self, x, noise=None):
+        h = self.tok(x) + self.pos[:, : x.shape[1]]
+        return h if noise is None else h + self.noise_proj(noise)
 
     def unembed(self, h, x):
         return self.head(h)
