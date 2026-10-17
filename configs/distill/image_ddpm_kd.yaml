@@ -1,0 +1,17 @@
+# Trajectory KD baseline: 4-step student regressing teacher-ODE states onto their endpoints.
+# clip_x0 applies to the student sampler (eval and export) only; the loss uses the unclipped x0, unlike DMD2 where the clip is inside the generator output.
+seed: 0
+device: auto
+output_dir: runs/distill/image_ddpm_kd
+teacher: runs/image_ddpm_ddpo/sft/final     # produced by: omnidiff sft -c configs/image_ddpm_ddpo.yaml
+
+distill:
+  method: {type: kd}
+  student_process: {clip_x0: 1.0}
+  student_steps: 4
+  data: teacher
+  pool_size: 4096
+  steps: 2000
+  batch_size: 64
+  lr: 1e-4
+  eval_every: 500

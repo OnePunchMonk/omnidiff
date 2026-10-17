@@ -42,9 +42,13 @@ class DMD2(Distiller):
     sampler = "renoise"
 
     def __init__(self, fake_updates: int = 5, tau_min: float = 0.02, tau_max: float = 0.98,
-                 gan_weight: float = 0.0, backward_sim: bool = True, fake_lr: float | None = None):
+                 gan_weight: float = 0.0, backward_sim: bool = True, fake_lr: float | None = None,
+                 last_stage_prob: float | None = None):
         self.fake_updates, self.tau_min, self.tau_max = fake_updates, tau_min, tau_max
         self.gan_weight, self.backward_sim, self.fake_lr = gan_weight, backward_sim, fake_lr
+        if last_stage_prob is not None and not 0.0 <= last_stage_prob <= 1.0:  # also rejects nan
+            raise ValueError(f"last_stage_prob must be None or in [0, 1], got {last_stage_prob}")
+        self.last_stage_prob = last_stage_prob
 
     def setup(self, tr):
         fake = copy.deepcopy(tr.teacher).requires_grad_(True).train()
@@ -57,10 +61,27 @@ class DMD2(Distiller):
     def schedule(self, it, tr):
         return ["fake"] * self.fake_updates + ["student"]
 
+    def _stage(self, tr) -> int:
+        """Grid index the generator starts from: uniform, or the last stage with ``last_stage_prob``
+        (so the last stage's overall probability is p + (1 - p) / K for K stages).
+
+        The DM gradient matches the *mixture* of the stages' outputs to the data, while inference
+        returns only the last stage's, so uniform stages let the last one drift (see docs/notes/D1.md).
+        """
+        last = len(tr.grid) - 2
+        if self.last_stage_prob is not None and last > 0 and tr.rng.random() < self.last_stage_prob:
+            return last
+        return int(tr.rng.integers(0, last + 1))
+
     def generate(self, tr, n: int):
-        """Student samples x0 (with grad when enabled), from its own state at a random grid step."""
+        """Student samples x0 (with grad), from its own state at a random grid step.
+
+        The rollout to grid[k] is ``no_grad``, as in the DMD2 paper: earlier steps only produce the input
+        state (the student's own renoised output, the state inference meets at grid[k]); the gradient
+        flows through the final x0 prediction at t = grid[k] alone.
+        """
         cond = tr.prompt_cond(n)
-        k = int(tr.rng.integers(0, len(tr.grid) - 1)) if self.backward_sim else 0
+        k = self._stage(tr) if self.backward_sim else 0
         x = tr.student_rollout(cond, k, n)
         t = tr.grid[k]
         # s = 0 asks a two-time (flow-map) student for the jump straight to data; one-time models ignore it

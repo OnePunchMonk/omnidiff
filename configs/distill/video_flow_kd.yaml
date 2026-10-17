@@ -1,0 +1,15 @@
+# Trajectory KD baseline: 4-step student regressing teacher-ODE states onto their endpoints.
+seed: 0
+device: auto
+output_dir: runs/distill/video_flow_kd
+teacher: runs/video_flow_grpo/sft/final     # produced by: omnidiff sft -c configs/video_flow_grpo.yaml
+
+distill:
+  method: {type: kd}
+  student_steps: 4
+  data: teacher
+  pool_size: 4096
+  steps: 2000
+  batch_size: 32
+  lr: 1e-4
+  eval_every: 500

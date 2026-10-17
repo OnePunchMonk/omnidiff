@@ -5,13 +5,31 @@ Prerequisites (CPU, minutes each):
     uv run omnidiff distill -c configs/distill/<name>.yaml  for each student below
 Usage:
     uv run python scripts/distill_toy_report.py [-n 512]
+
+Multi-seed mode (`--seeds 0 1 2`): teachers stay fixed and each student is trained once per seed with `seed=<s>`
+into <runs-root>/<name><suffix>_s<s> (default runs/distill). Each trained run gets a provenance.json (resolved
+config including --set extras, seed, teacher path and its model.pt mtime/size, mtimes of the distill config and of
+the method and trainer sources). A run is skipped only when that file matches exactly; otherwise it is reported
+stale and the script stops unless --retrain-stale is given. `--reuse-seed0` (opt-in) uses the single-seed run
+runs/distill/<name><suffix> as seed 0 if legacy_problem() finds nothing wrong with it. Cells are mean ± sample std
+(n - 1) over seeds; reference rows are deterministic and carry no std.
+    uv run python scripts/distill_toy_report.py --seeds 0 1 2 [--teacher-suffix _ts10 --groups image_flow_grpo] [--dry-run]
+`--teacher-suffix _ts10` reads each teacher from `output_dir` of configs/<group>_ts10.yaml. A missing teacher fails
+the run unless --allow-missing is given (then the report lists the skipped groups). `--set` smoke runs go to
+runs/distill_smoke.
 """
 
 from __future__ import annotations
 
 import argparse
+import json
 from pathlib import Path
 
+from omnidiff.core.config import from_dict, load_config
+from omnidiff.core.registry import DISTILLERS, discover_plugins
+from omnidiff.distill.trainer import DistillConfig, DistillTrainer
+from omnidiff.reward.aggregate import aggregate
+from omnidiff.reward.aggregate import to_markdown as agg_markdown
 from omnidiff.reward.scorecard import run_scorecard, save, to_markdown
 
 GROUPS = {
@@ -56,12 +74,199 @@ sampler, time shift or temperature). Students should be judged against the best 
 """  # kept in the JSON, left out of the doc tables for width
 
 
-def main():
+ROOT = Path(__file__).resolve().parent.parent
+CONFIGS = ROOT / "configs"
+FLOW = ["image_flow_grpo", "video_flow_grpo"]  # the groups that have time_scale: 10 teacher configs
+SEED_NOTE = """Seeds: {seeds}. Students are retrained per seed against a fixed teacher; cells are mean ± sample std (n - 1)
+over seeds, and `(k/N)` marks a cell fed by fewer than the N planned seeds. The evaluation seed is fixed (same
+prompts, same noise for every row), so the std is training-seed variance only: sampling noise in the metrics at
+n = {n} is not measured. `reference` rows are deterministic, so they have no std.
+{skipped}
+"""
+
+
+def teacher_ckpt(teacher: str, suffix: str) -> tuple[Path, bool]:
+    """The teacher checkpoint named by configs/<teacher><suffix>.yaml, and whether its model.pt exists."""
+    path = CONFIGS / f"{teacher}{suffix}.yaml"
+    if not path.exists():
+        return Path(f"<no {path.relative_to(ROOT)}>"), False
+    ckpt = Path(load_config(path)["output_dir"]) / "sft/final"
+    return ckpt, (ckpt / "model.pt").exists()
+
+
+def _stat(path: Path) -> dict:
+    st = path.stat()
+    return {"mtime_ns": st.st_mtime_ns, "size": st.st_size}
+
+
+def student_cfg(name: str, teacher: Path, seed: int, out: Path, extra: list[str]) -> dict:
+    return load_config(CONFIGS / "distill" / f"{name}.yaml",
+                       [f"teacher={teacher}", f"seed={seed}", f"output_dir={out}", "device=cpu", *extra])
+
+
+def method_sources(cfg: dict) -> list[Path]:
+    import inspect
+
+    import omnidiff.distill.trainer as trainer
+
+    method = DISTILLERS.get(cfg["distill"]["method"]["type"])
+    return [Path(inspect.getsourcefile(method)), Path(inspect.getsourcefile(trainer))]
+
+
+def provenance(name: str, cfg: dict, seed: int, teacher: Path, extra: list[str]) -> dict:
+    return {"cfg": json.loads(json.dumps(cfg, default=str)), "seed": seed, "teacher": str(teacher),
+            "teacher_model": _stat(teacher / "model.pt"), "extra": list(extra),
+            "config_file": _stat(CONFIGS / "distill" / f"{name}.yaml"),
+            "sources": {p.name: _stat(p) for p in method_sources(cfg)}}
+
+
+def diff(want: dict, have: dict) -> str | None:
+    """First key whose value differs, as a short reason; None when the two match exactly."""
+    for k in dict.fromkeys([*want, *have]):
+        if want.get(k) != have.get(k):
+            return k
+    return None
+
+
+def legacy_problem(name: str, cfg: dict, teacher: Path, extra: list[str], legacy: Path) -> str | None:
+    """Why runs/distill/<name><suffix> cannot stand in for seed 0, or None if it can."""
+    import yaml
+
+    final = legacy / "distill/final"
+    if extra:
+        return "--set extras given"
+    if not (final / "model.pt").exists():
+        return "no model.pt"
+    saved = yaml.safe_load((final / "config.yaml").read_text())
+    src = saved.get("distilled_from", {})
+    dc = from_dict(DistillConfig, cfg.get("distill"))
+    if Path(src.get("teacher", "")) != teacher:
+        return f"teacher {src.get('teacher')} != {teacher}"
+    for k, want in (("method", dc.method), ("steps", dc.steps), ("teacher_guidance", dc.teacher_guidance)):
+        if src.get(k) != want:
+            return f"distilled_from.{k} {src.get(k)} != {want}"
+    if saved.get("seed", 0) != 0:
+        return f"seed {saved.get('seed')} != 0"
+    mt = (final / "model.pt").stat().st_mtime_ns
+    for label, p in [("teacher", teacher / "model.pt"), ("distill config", CONFIGS / "distill" / f"{name}.yaml"),
+                     *[(f"source {q.name}", q) for q in method_sources(cfg)]]:
+        if mt <= p.stat().st_mtime_ns:
+            return f"student model.pt is not newer than {label}"
+    return None
+
+
+def plan_run(name: str, teacher: Path, seed: int, args) -> dict:
+    """Decide what to do for one (student, seed): reuse a legacy run, skip a proven one, train, or flag it stale."""
+    suffix = args.teacher_suffix
+    out = Path(args.runs_root) / f"{name}{suffix}_s{seed}"
+    cfg = student_cfg(name, teacher, seed, out, args.set)
+    run = {"name": name, "seed": seed, "out": out, "cfg": cfg, "state": "train", "why": "", "prov": None}
+    legacy = Path("runs/distill") / f"{name}{suffix}"
+    if seed == 0 and args.reuse_seed0:
+        why = legacy_problem(name, cfg, teacher, args.set, legacy)
+        if why is None:
+            return {**run, "out": legacy, "state": "reuse"}
+        run["why"] = f"legacy {legacy} not reusable: {why}"
+    run["prov"] = provenance(name, cfg, seed, teacher, args.set)
+    pfile = out / "provenance.json"
+    if (out / "distill/final/model.pt").exists():
+        if not pfile.exists():
+            run.update(state="stale", why="model.pt without provenance.json")
+        elif (bad := diff(run["prov"], json.loads(pfile.read_text()))) is not None:
+            run.update(state="stale", why=f"provenance differs in {bad!r}")
+        else:
+            run["state"] = "done"
+    return run
+
+
+def train(run: dict) -> str:
+    out = run["out"]
+    if run["state"] in ("train", "stale"):
+        DistillTrainer(run["cfg"]).train()
+        (out / "provenance.json").write_text(json.dumps(run["prov"], indent=1))
+    return str(out / "distill/final")
+
+
+def main_seeds(args):
+    suffix = args.teacher_suffix
+    if args.set and args.runs_root == "runs/distill":
+        args.runs_root = "runs/distill_smoke"
+    discover_plugins()
+    groups = {g: GROUPS[g] for g in (args.groups or GROUPS)}
+    teachers, skipped = {}, []
+    for g in groups:
+        ckpt, ok = teacher_ckpt(g, suffix)
+        if ok:
+            teachers[g] = ckpt
+        else:
+            skipped.append(f"{g} (missing teacher {ckpt})")
+            print(f"missing teacher {ckpt}")
+    if skipped and not args.dry_run and not args.allow_missing:
+        raise SystemExit("missing teachers (use --allow-missing to skip these groups): " + "; ".join(skipped))
+    plans = {g: [plan_run(name, teachers[g], s, args) for name in groups[g] for s in args.seeds] for g in teachers}
+    for runs in plans.values():
+        for r in runs:
+            print(f"{r['state']:5s} {r['name']} seed={r['seed']} -> {r['out']}" + (f"  ({r['why']})" if r["why"] else ""))
+    flat = [r for runs in plans.values() for r in runs]
+    count = lambda st: sum(r["state"] == st for r in flat)
+    print(f"{count('train')} to train, {count('stale')} stale, {count('done')} done, {count('reuse')} reused legacy")
+    if args.dry_run:
+        return
+    stale = [r for r in flat if r["state"] == "stale"]
+    if stale and not args.retrain_stale:
+        raise SystemExit("stale runs (use --retrain-stale to retrain them): " + "; ".join(
+            f"{r['out']}: {r['why']}" for r in stale))
+    sections, failed = [], []
+    for g, runs in plans.items():
+        ckpts = {}
+        for r in runs:
+            try:
+                ckpts[f"{r['name']}@s{r['seed']}"] = train(r)
+            except Exception as e:  # keep the other seeds; the failure is reported and sets the exit code
+                failed.append(f"{r['name']} seed={r['seed']}: {type(e).__name__}: {e}")
+                print("FAILED", failed[-1], flush=True)
+        rows = run_scorecard(str(teachers[g]), ckpts, args.nfe, args.n, variants=VARIANTS.get(g))
+        for r in rows:
+            if "@s" in r["model"]:
+                r["model"], seed = r["model"].rsplit("@s", 1)
+                r["seed"] = int(seed)
+        save(rows, f"runs/scorecards/{g}{suffix}_seeds")
+        agg = aggregate([{k: v for k, v in r.items() if k not in DROP} for r in rows])
+        sections.append(f"### Teacher `{teachers[g].parent.parent.name}`\n\n{agg_markdown(agg, len(args.seeds))}\n")
+        print(sections[-1], flush=True)
+    note = "".join(f"Skipped: {s}\n" for s in skipped) + "".join(f"Failed: {f}\n" for f in failed)
+    out = args.out or f"docs/results/distillation_toy_seeds{suffix}.md"
+    Path(out).parent.mkdir(parents=True, exist_ok=True)
+    Path(out).write_text(HEADER.format(n=args.n, nfe=", ".join(map(str, args.nfe))) + SEED_NOTE.format(
+        seeds=", ".join(map(str, args.seeds)), n=args.n, skipped=note) + "\n".join(sections))
+    print(f"wrote {out}")
+    if failed:
+        raise SystemExit(f"{len(failed)} run(s) failed")
+
+
+def build_parser():
     ap = argparse.ArgumentParser()
     ap.add_argument("-n", type=int, default=512)
     ap.add_argument("--nfe", type=int, nargs="+", default=[1, 2, 4, 8])
-    ap.add_argument("--out", default="docs/results/distillation_toy.md")
-    args = ap.parse_args()
+    ap.add_argument("--out", default=None)
+    ap.add_argument("--seeds", type=int, nargs="+", default=None, help="train and aggregate over these seeds")
+    ap.add_argument("--groups", nargs="+", choices=list(GROUPS), default=None, help="teacher groups to run (default: all)")
+    ap.add_argument("--teacher-suffix", default="", help="e.g. _ts10: use configs/<teacher>_ts10.yaml teachers")
+    ap.add_argument("--allow-missing", action="store_true", help="skip groups whose teacher is missing (listed in the report)")
+    ap.add_argument("--reuse-seed0", action="store_true",
+                    help="use runs/distill/<name><suffix> as seed 0 if it passes the checks in legacy_problem")
+    ap.add_argument("--retrain-stale", action="store_true", help="retrain runs whose provenance no longer matches")
+    ap.add_argument("--runs-root", default="runs/distill", help="where per-seed runs go (runs/distill_smoke with --set)")
+    ap.add_argument("--set", nargs="*", default=[], help="extra config overrides for every student (smoke tests)")
+    ap.add_argument("--dry-run", action="store_true", help="print the planned runs and exit, creating nothing")
+    return ap
+
+
+def main():
+    args = build_parser().parse_args()
+    if args.seeds:
+        return main_seeds(args)
+    args.out = args.out or "docs/results/distillation_toy.md"
     sections = []
     for teacher, students in GROUPS.items():
         ckpts = {s: f"runs/distill/{s}/distill/final" for s in students if Path(f"runs/distill/{s}/distill/final").exists()}
