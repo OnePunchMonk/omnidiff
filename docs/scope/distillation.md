@@ -172,8 +172,9 @@ Models of 1B+ parameters, FSDP, sparse attention, causal/streaming students (Sel
 | multi-role trainer, teacher pool, EMA, export with sampler spec | done | `omnidiff.distill.trainer` |
 | `kd`, `dmd2` (+ GAN head), `consistency`, `flow_map`, `sdtt` | done | `omnidiff.distill.methods` |
 | scorecard: FD / precision / recall vs teacher and data, diversity, oracles, reward, latency | done | `omnidiff.reward.scorecard`, dataset `oracle()` |
-| RL on few-step students | works end to end, experiments running | `test_renoise_student_is_rl_tunable` |
-| toy results | see [docs/results/distillation_toy.md](../results/distillation_toy.md) | |
+| RL on few-step students | done; order study in results | `test_renoise_student_is_rl_tunable` |
+| toy results | done (single seed): see [docs/results/distillation_toy.md](../results/distillation_toy.md) | |
+| noise-conditioned text distillation (`coupled_kd`) | done; 4-step validity 0.66 against 0.20 for the tuned teacher on the toy | `methods/coupled_kd.py` |
 | tuned-baseline rows in the scorecard (teacher + sampler/temperature overrides) | done | `run_scorecard(variants=...)`, `--ref-variant` |
 | discrete consistency (DCD / multi-mask) | not started; read 2607.19686 first | |
 | rCM (flow map with `s_mode: zero` + DMD regulariser) | not started; needs composable objectives | |
