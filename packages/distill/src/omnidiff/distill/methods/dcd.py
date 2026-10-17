@@ -46,6 +46,15 @@ class DiscreteConsistency(Distiller):
         # copied from the student, after LoRA is applied, so the two share parameter and buffer names
         self.target = copy.deepcopy(tr.student).requires_grad_(False).eval()
 
+    def state_dict(self):
+        return {"target": self.target.state_dict()}
+
+    def load_state_dict(self, state, tr=None):
+        target = state.get("target")
+        if target is None:
+            raise ValueError("dcd checkpoint has no target state")
+        self.target.load_state_dict(target)
+
     def after_update(self, role, tr):
         if role != "student":
             return

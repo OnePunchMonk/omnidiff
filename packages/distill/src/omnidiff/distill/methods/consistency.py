@@ -38,6 +38,18 @@ class ConsistencyDistillation(Distiller):
         self.c = 0.00054 * math.sqrt(math.prod(tr.shape))
         self.teacher_grid = tr.process.timesteps(self.num_intervals, tr.device)
 
+    def state_dict(self):
+        return {"target_model": None if self.target_model is None else self.target_model.state_dict()}
+
+    def load_state_dict(self, state, tr=None):
+        target = state.get("target_model")
+        if target is not None:
+            if self.target_model is None:
+                raise ValueError("consistency checkpoint has an EMA target but the method does not")
+            self.target_model.load_state_dict(target)
+        elif self.target_model is not None:
+            raise ValueError("consistency checkpoint has no target_model state but target='ema'")
+
     def after_update(self, role, tr):
         if self.target_model is not None:
             with torch.no_grad():

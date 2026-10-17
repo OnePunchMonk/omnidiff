@@ -67,6 +67,22 @@ class ProgressiveDistillation(Distiller):
         self.round_teacher = None  # round 0 distils the real teacher
         self.round_len = tr.dc.steps // self.rounds
 
+    def state_dict(self):
+        return {
+            "round": self.round,
+            "round_teacher": None if self.round_teacher is None else self.round_teacher.state_dict(),
+        }
+
+    def load_state_dict(self, state, tr):
+        self.round = int(state["round"])
+        teacher = state.get("round_teacher")
+        if teacher is None:
+            self.round_teacher = None
+            return
+        if self.round_teacher is None:
+            self.round_teacher = copy.deepcopy(tr.student).requires_grad_(False).eval()
+        self.round_teacher.load_state_dict(teacher)
+
     def schedule(self, it, tr):
         r = min(it // self.round_len, self.rounds - 1)
         if r != self.round:
