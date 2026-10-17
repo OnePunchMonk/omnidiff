@@ -53,11 +53,16 @@ class ProgressiveDistillation(Distiller):
         return tr.process.timesteps(self.start_steps // 2 ** (r + 1), tr.device)
 
     def default_grid(self, tr):
-        return self.grid(tr, self.rounds - 1)
+        return self.grid(tr, 0)  # ``schedule`` moves ``tr.grid`` to each round's grid, so an export is the round's student
 
     def setup(self, tr):
+        if tr.dc.steps < self.rounds:
+            raise ValueError(f"progressive needs distill.steps >= rounds ({tr.dc.steps} < {self.rounds})")
+        if tr.dc.student_steps is not None or tr.dc.student_timesteps is not None:
+            raise ValueError("progressive sets the student grid from start_steps and rounds; "
+                             "do not set student_steps / student_timesteps")
         self.round_teacher = None  # round 0 distils the real teacher
-        self.round_len = max(1, tr.dc.steps // self.rounds)
+        self.round_len = tr.dc.steps // self.rounds
 
     def schedule(self, it, tr):
         r = min(it // self.round_len, self.rounds - 1)
@@ -67,7 +72,14 @@ class ProgressiveDistillation(Distiller):
                 self.round_teacher = copy.deepcopy(tr.student).requires_grad_(False).eval()
             with (source.swapped_in(tr.student) if source else torch.no_grad()):
                 self.round_teacher.load_state_dict(tr.student.state_dict())
+            # as in the paper, the next round's student restarts from the snapshot, with fresh optimiser state
+            tr.student.load_state_dict(self.round_teacher.state_dict())
+            role = tr.roles["student"]
+            role.optimizer.state.clear()
+            if source:
+                source.shadow = {k: v.detach().clone() for k, v in tr.student.state_dict().items() if k in source.shadow}
             self.round = r
+            tr.grid = self.grid(tr, r)
         return ["student"]
 
     def _teacher_pred(self, tr, x, t, cond):
@@ -94,10 +106,15 @@ class ProgressiveDistillation(Distiller):
     @staticmethod
     def target_pred(process, x_t, x_s, t, s):
         """The network output (in the process's parameterisation) whose ODE step from x_t at t lands on x_s."""
-        _, eps = ProgressiveDistillation.x0_eps_target(process, x_t, x_s, t, s)
+        x0, _ = ProgressiveDistillation.x0_eps_target(process, x_t, x_s, t, s)
+        # to_x0 is affine in pred with a nonzero slope for t > 0 (to_eps has none at t = 1 for flow);
+        # probe it without the gaussian x0 clip, which would break the affine map
+        process = copy.copy(process)
+        if hasattr(process, "clip_x0"):
+            process.clip_x0 = None
         zero = torch.zeros_like(x_t)
-        e0, e1 = process.to_eps(zero, x_t, t), process.to_eps(zero + 1, x_t, t)
-        return (eps - e0) / (e1 - e0)  # to_eps is affine in pred, with a per-time slope
+        a0, a1 = process.to_x0(zero, x_t, t), process.to_x0(zero + 1, x_t, t)
+        return (x0 - a0) / (a1 - a0)
 
     def loss(self, role, tr):
         b = tr.data.batch(tr.dc.batch_size)
