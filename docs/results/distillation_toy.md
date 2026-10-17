@@ -109,6 +109,22 @@ Samples, data FD (comparable across teachers; lower is better). "Best teacher" i
 - **The smoother teachers are also better few-step samplers on their own.** Data FD at 4 steps falls from 0.33 to 0.19 to 0.15 for scales 1000, 10 and 1. This is a single seed, and the scale-1 teacher has a slightly worse shape error (0.069 against 0.042).
 - `flow_map` now warns when the teacher's time scale is above 100.
 
+**Every method distils better from the smooth teacher.** The configs are unchanged; only the teacher's time scale differs, 1000 versus 10. Both teachers are equally good at 32 steps (data FD 0.089 and 0.094), so the gain comes from the teacher being easier to distil, not from a better teacher. Data FD per NFE, shown as scale 1000 → scale 10:
+
+| method | NFE 1 | 2 | 4 | 8 |
+|---|---|---|---|---|
+| KD | 0.145 → **0.120** | 0.181 → 0.124 | 0.235 → 0.147 | 0.202 → 0.159 |
+| consistency | 0.169 → 0.126 | 0.166 → 0.143 | 0.178 → 0.166 | 0.195 → 0.162 |
+| DMD2 | 0.343 → 0.384 | 0.198 → 0.201 | 0.476 → 0.250 | 1.575 → 1.007 |
+| rCM | 1.000 → 0.622 | 0.637 → 0.445 | 0.369 → 0.272 | 0.277 → 0.225 |
+| flow map | 1.285 → 0.179 | 0.614 → **0.152** | 0.385 → **0.128** | 0.214 → **0.117** |
+| best teacher sampler | 1.22 → 0.68 | 0.34 → 0.31 | 0.19 → 0.15 | 0.14 → 0.12 |
+
+- From the smooth teacher, KD is best at 1 step and the flow map is best at 2, 4 and 8. Both beat the best teacher sampler at every NFE.
+- The flow map also keeps recall (0.93–0.94 at 2–8 steps), which DMD2 and rCM do not (0.74–0.90).
+- The gains for the methods that do not use a JVP (KD, consistency, DMD2) suggest that a smoother teacher is easier to distil in general, not only for derivative-based objectives. This is a single seed.
+- **Recommendation:** use `model.time_scale: 10` for new continuous teachers. The shipped configs keep 1000 so that the tables above still reproduce.
+
 ## Open issues
 
 - **Flow maps: resolved.** The cause was the teacher's time embedding, not the objective (see above). Open: whether the other methods (consistency, DMD2, rCM) also gain from a smooth teacher, and whether to change the default for new configs.
