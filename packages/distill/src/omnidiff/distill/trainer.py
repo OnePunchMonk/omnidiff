@@ -15,6 +15,8 @@ from __future__ import annotations
 
 import contextlib
 import copy
+import hashlib
+import json
 import random
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -32,6 +34,50 @@ from omnidiff.core.registry import DATASETS, DISTILLERS, load_plugins
 from omnidiff.core.sampling import predict, sample, step
 from omnidiff.core.utils import (CONFIG, JsonlLogger, index_cond, load_weights, make_generator, resolve_device,
                                  save_checkpoint, seed_everything)
+
+
+_STATE_MARKER = "__omnidiff_state_type__"
+
+
+def _safe_encode(value):
+    """Convert checkpoint state to values supported by ``weights_only=True``."""
+    if isinstance(value, torch.Tensor):
+        return value.detach().cpu()
+    if isinstance(value, np.ndarray):
+        return {
+            _STATE_MARKER: "numpy_array",
+            "dtype": value.dtype.str,
+            "value": torch.as_tensor(value).clone(),
+        }
+    if isinstance(value, np.generic):
+        return value.item()
+    if isinstance(value, dict):
+        return {_safe_encode(k): _safe_encode(v) for k, v in value.items()}
+    if isinstance(value, tuple):
+        return {_STATE_MARKER: "tuple", "value": [_safe_encode(v) for v in value]}
+    if isinstance(value, list):
+        return [_safe_encode(v) for v in value]
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    raise TypeError(f"cannot safely checkpoint value of type {type(value).__name__}")
+
+
+def _safe_decode(value):
+    if isinstance(value, dict):
+        marker = value.get(_STATE_MARKER)
+        if marker == "numpy_array":
+            return value["value"].numpy().astype(np.dtype(value["dtype"]), copy=False)
+        if marker == "tuple":
+            return tuple(_safe_decode(v) for v in value["value"])
+        return {_safe_decode(k): _safe_decode(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_safe_decode(v) for v in value]
+    return value
+
+
+def _canonical_json(value) -> str:
+    """Serialize config with stable ordering and no YAML/Python-specific objects."""
+    return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
 
 
 @dataclass
@@ -104,6 +150,7 @@ class TeacherPool:
     """
 
     def __init__(self, tr: "DistillTrainer", size: int):
+        self.kind = "teacher"
         grid = tr.grid.cpu().tolist()
         full = tr.process.timesteps(tr.dc.teacher_steps, "cpu").tolist()
         merged = sorted(set(round(t, 6) for t in full + grid), reverse=True)
@@ -130,12 +177,25 @@ class TeacherPool:
 
 class DatasetSource:
     def __init__(self, tr: "DistillTrainer", spec):
+        self.kind = "dataset"
         self.dataset = DATASETS.build(spec, **tr.c.context)
         self.rng, self.device = tr.rng, tr.device
 
     def batch(self, n: int) -> Batch:
         x0, cond = self.dataset.sample(n, self.rng)
         return Batch(x0.to(self.device), {k: v.to(self.device) for k, v in cond.items()})
+
+    def state_dict(self) -> dict:
+        hook = getattr(self.dataset, "state_dict", None)
+        return {} if hook is None else (hook() or {})
+
+    def load_state_dict(self, state: dict) -> None:
+        hook = getattr(self.dataset, "load_state_dict", None)
+        if hook is None:
+            if state:
+                raise ValueError("dataset checkpoint contains state, but the dataset has no load_state_dict() hook")
+            return
+        hook(state)
 
 
 class DistillTrainer:
@@ -154,6 +214,8 @@ class DistillTrainer:
         self.out_dir = Path(cfg.get("output_dir", "runs/distill")) / "distill"
 
         teacher_path = Path(cfg["teacher"])
+        teacher_weights = teacher_path / "model.pt" if teacher_path.is_dir() else teacher_path
+        self.teacher_fingerprint = hashlib.sha256(teacher_weights.read_bytes()).hexdigest()
         self.teacher_cfg = load_config(teacher_path / CONFIG)
         self.c = build(self.teacher_cfg, self.device)
         self.process, self.shape = self.c.process, self.c.sample_shape
@@ -193,6 +255,16 @@ class DistillTrainer:
 
         self.data = TeacherPool(self, self.dc.pool_size) if self.dc.data == "teacher" else DatasetSource(self, self.dc.data)
         self.method.setup(self)
+        method_spec = self.dc.method if isinstance(self.dc.method, dict) else {"type": self.dc.method}
+        signature_distill = copy.deepcopy(cfg.get("distill") or {})
+        for key in ("resume_from", "save_every", "save_state_every"):
+            signature_distill.pop(key, None)
+        self.trajectory_signature = _canonical_json({
+            "distill": signature_distill,
+            "method": method_spec,
+            "student_process": {"sampler": self.student_sampler, "settings": self.student_settings},
+        })
+        self.trajectory_signature_sha256 = hashlib.sha256(self.trajectory_signature.encode()).hexdigest()
         resume_from = resume_from if resume_from is not None else self.dc.resume_from
         if resume_from is not None:
             self.load_state(resume_from)
@@ -269,39 +341,65 @@ class DistillTrainer:
         roles = {}
         for name, role in self.roles.items():
             roles[name] = {
-                "model": role.model.state_dict(),
-                "optimizer": role.optimizer.state_dict(),
+                "model": _safe_encode(role.model.state_dict()),
+                "optimizer": _safe_encode(role.optimizer.state_dict()),
                 "ema": None if role.ema is None else {
                     "decay": role.ema.decay,
-                    "shadow": role.ema.shadow,
+                    "shadow": _safe_encode(role.ema.shadow),
                 },
             }
         data = None
         if isinstance(self.data, TeacherPool):
-            data = {"type": "teacher_pool", "states": self.data.states, "x0": self.data.x0,
-                    "cond": self.data.cond, "prompts": self.data.prompts}
+            data = {"kind": self.data.kind, "states": _safe_encode(self.data.states),
+                    "x0": _safe_encode(self.data.x0), "cond": _safe_encode(self.data.cond),
+                    "prompts": _safe_encode(self.data.prompts)}
+        else:
+            data = {"kind": self.data.kind, "state": _safe_encode(self.data.state_dict())}
         rng = {
-            "python": random.getstate(),
-            "numpy": np.random.get_state(),
-            "generator": self.gen.get_state(),
-            "trainer": self.rng.bit_generator.state,
-            "torch": torch.get_rng_state(),
+            "python": _safe_encode(random.getstate()),
+            "numpy": _safe_encode(np.random.get_state()),
+            "generator": _safe_encode(self.gen.get_state()),
+            "trainer": _safe_encode(self.rng.bit_generator.state),
+            "torch": _safe_encode(torch.get_rng_state()),
         }
         if torch.cuda.is_available():
-            rng["cuda"] = torch.cuda.get_rng_state_all()
-        torch.save({"iteration": self.iteration, "roles": roles, "data": data, "method": self.method.state_dict(),
-                    "rng": rng}, state_path)
+            rng["cuda"] = _safe_encode(torch.cuda.get_rng_state_all())
+        metadata = {
+            "teacher_sha256": self.teacher_fingerprint,
+            "trajectory_signature": self.trajectory_signature,
+            "trajectory_signature_sha256": self.trajectory_signature_sha256,
+            "data_kind": self.data.kind,
+        }
+        torch.save({"version": 2, "metadata": metadata, "iteration": self.iteration, "roles": roles,
+                    "data": data, "method": _safe_encode(self.method.state_dict()), "rng": rng}, state_path)
         return path
 
     def load_state(self, path) -> None:
         """Load a state saved by :meth:`save_state`."""
         state_path = self._state_path(path)
-        state = torch.load(state_path, map_location="cpu", weights_only=False)
+        state = torch.load(state_path, map_location="cpu", weights_only=True)
+        metadata = state.get("metadata")
+        if not isinstance(metadata, dict):
+            raise ValueError("checkpoint has no safe distillation metadata; cannot verify resume compatibility")
+        saved_teacher = metadata.get("teacher_sha256")
+        if saved_teacher != self.teacher_fingerprint:
+            raise ValueError("teacher fingerprint mismatch: checkpoint teacher_sha256 "
+                             f"{saved_teacher!r}, current teacher_sha256 {self.teacher_fingerprint!r}")
+        saved_signature = metadata.get("trajectory_signature_sha256")
+        if saved_signature != self.trajectory_signature_sha256:
+            raise ValueError("trajectory config signature mismatch: checkpoint "
+                             f"{saved_signature!r}, current {self.trajectory_signature_sha256!r}")
+        data = state.get("data")
+        if not isinstance(data, dict):
+            raise ValueError("checkpoint has no distillation data state")
+        saved_kind = data.get("kind", metadata.get("data_kind"))
+        if saved_kind != self.data.kind:
+            raise ValueError(f"data kind mismatch: checkpoint has {saved_kind!r}, trainer has {self.data.kind!r}")
         saved_roles = state["roles"]
         if set(saved_roles) != set(self.roles):
             raise ValueError(f"checkpoint roles {sorted(saved_roles)} do not match trainer roles {sorted(self.roles)}")
         for name, role in self.roles.items():
-            saved = saved_roles[name]
+            saved = _safe_decode(saved_roles[name])
             role.model.load_state_dict(saved["model"])
             role.optimizer.load_state_dict(saved["optimizer"])
             if role.ema is None:
@@ -313,25 +411,25 @@ class DistillTrainer:
                 role.ema.decay = saved["ema"]["decay"]
                 device = next(role.model.parameters()).device
                 role.ema.shadow = {k: v.to(device) for k, v in saved["ema"]["shadow"].items()}
-        data = state.get("data")
-        if data is not None:
-            if not isinstance(self.data, TeacherPool) or data.get("type") != "teacher_pool":
-                raise ValueError("teacher-pool checkpoint does not match trainer data")
-            self.data.states = data["states"].to(self.device)
-            self.data.x0 = data["x0"].to(self.device)
+        if isinstance(self.data, TeacherPool):
+            saved_data = _safe_decode(data)
+            self.data.states = saved_data["states"].to(self.device)
+            self.data.x0 = saved_data["x0"].to(self.device)
             self.data.cond = {k: v.to(self.device) if isinstance(v, torch.Tensor) else v
-                              for k, v in data["cond"].items()}
-            self.data.prompts = data["prompts"]
-        self.method.load_state_dict(state.get("method", {}))
+                              for k, v in saved_data["cond"].items()}
+            self.data.prompts = saved_data["prompts"]
+        else:
+            self.data.load_state_dict(_safe_decode(data.get("state", {})))
+        self.method.load_state_dict(_safe_decode(state.get("method", {})))
         self.iteration = int(state["iteration"])
         rng = state["rng"]
-        random.setstate(rng["python"])
-        np.random.set_state(rng["numpy"])
-        self.rng.bit_generator.state = rng["trainer"]
-        torch.set_rng_state(rng["torch"])
-        self.gen.set_state(rng["generator"])
+        random.setstate(_safe_decode(rng["python"]))
+        np.random.set_state(_safe_decode(rng["numpy"]))
+        self.rng.bit_generator.state = _safe_decode(rng["trainer"])
+        torch.set_rng_state(_safe_decode(rng["torch"]))
+        self.gen.set_state(_safe_decode(rng["generator"]))
         if torch.cuda.is_available() and "cuda" in rng:
-            torch.cuda.set_rng_state_all(rng["cuda"])
+            torch.cuda.set_rng_state_all(_safe_decode(rng["cuda"]))
 
     def train(self) -> Path:
         logger = JsonlLogger(self.out_dir / "log.jsonl")

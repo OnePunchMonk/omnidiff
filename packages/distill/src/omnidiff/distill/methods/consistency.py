@@ -47,6 +47,8 @@ class ConsistencyDistillation(Distiller):
             if self.target_model is None:
                 raise ValueError("consistency checkpoint has an EMA target but the method does not")
             self.target_model.load_state_dict(target)
+        elif self.target_model is not None:
+            raise ValueError("consistency checkpoint has no target_model state but target='ema'")
 
     def after_update(self, role, tr):
         if self.target_model is not None:

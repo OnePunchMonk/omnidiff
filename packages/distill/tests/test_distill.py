@@ -1,6 +1,8 @@
 import copy
+import random
 from pathlib import Path
 
+import numpy as np
 import pytest
 import torch
 
@@ -156,33 +158,81 @@ def test_consistency_boundary_target_is_the_teacher_step(teachers, tmp_path):
     torch.testing.assert_close(tr.process.to_x0(pred, x, torch.zeros(2)), x)
 
 
-@pytest.mark.parametrize("name", ["image_flow_kd", "image_flow_dmd2", "text_masked_sdtt"])
+def _assert_nested_equal(left, right):
+    if isinstance(left, torch.Tensor):
+        torch.testing.assert_close(left, right, atol=0, rtol=0)
+    elif isinstance(left, dict):
+        assert set(left) == set(right)
+        for key in left:
+            _assert_nested_equal(left[key], right[key])
+    elif isinstance(left, (list, tuple)):
+        assert len(left) == len(right)
+        for a, b in zip(left, right):
+            _assert_nested_equal(a, b)
+    elif isinstance(left, np.ndarray):
+        np.testing.assert_array_equal(left, right)
+    else:
+        assert left == right
+
+
+def _rng_probe(tr):
+    """Probe every RNG stream and restore it so the probe itself is non-mutating."""
+    python_state = random.getstate()
+    numpy_state = copy.deepcopy(np.random.get_state())
+    torch_state = torch.get_rng_state()
+    generator_state = tr.gen.get_state()
+    trainer_state = copy.deepcopy(tr.rng.bit_generator.state)
+    try:
+        return {
+            "python": [random.random() for _ in range(4)],
+            "numpy": np.random.random(4),
+            "trainer": tr.rng.integers(0, 100, 4),
+            "torch": torch.rand(4),
+            "generator": torch.rand(4, generator=tr.gen),
+        }
+    finally:
+        random.setstate(python_state)
+        np.random.set_state(numpy_state)
+        torch.set_rng_state(torch_state)
+        tr.gen.set_state(generator_state)
+        tr.rng.bit_generator.state = trainer_state
+
+
+@pytest.mark.parametrize("name", ["image_flow_kd", "image_flow_dmd2", "text_masked_sdtt",
+                                   "image_flow_consistency", "image_flow_rcm"])
 def test_distill_save_resume_is_bit_identical(name, teachers, tmp_path):
     extra = ["distill.steps=4", "distill.log_every=100", "distill.eval_every=0"]
     if name == "image_flow_dmd2":
         extra.append("distill.method.fake_updates=1")
+    if name == "image_flow_consistency":
+        extra.append("distill.method.target=ema")
 
     full = _trainer(teachers, tmp_path / "full", name, *extra)
     full.train()
-    full_student = {k: v.clone() for k, v in full.student.state_dict().items()}
-    full_ema = None if full.roles["student"].ema is None else {
-        k: v.clone() for k, v in full.roles["student"].ema.shadow.items()
-    }
+    full_roles = {name: {"model": copy.deepcopy(role.model.state_dict()),
+                         "optimizer": copy.deepcopy(role.optimizer.state_dict()),
+                         "ema": None if role.ema is None else copy.deepcopy(role.ema.shadow)}
+                  for name, role in full.roles.items()}
+    full_method = copy.deepcopy(full.method.state_dict())
+    full_rng = _rng_probe(full)
 
     split = _trainer(teachers, tmp_path / "split", name, *extra[:])
     split.dc.steps = 2
     split.train()
     state = split.save_state(split.out_dir / "state")
+    torch.load(state / "state.pt", map_location="cpu", weights_only=True)
     resumed_cfg = distill_config(ROOT / "configs" / "distill" / f"{name}.yaml", teachers, tmp_path / "split",
                                   *extra, f"distill.resume_from={state}")
     resumed = DistillTrainer(resumed_cfg)
     resumed.train()
 
-    for k, v in full_student.items():
-        torch.testing.assert_close(resumed.student.state_dict()[k], v, atol=0, rtol=0)
-    if full_ema is not None:
-        for k, v in full_ema.items():
-            torch.testing.assert_close(resumed.roles["student"].ema.shadow[k], v, atol=0, rtol=0)
+    resumed_roles = {name: {"model": role.model.state_dict(),
+                            "optimizer": role.optimizer.state_dict(),
+                            "ema": None if role.ema is None else role.ema.shadow}
+                     for name, role in resumed.roles.items()}
+    _assert_nested_equal(full_roles, resumed_roles)
+    _assert_nested_equal(full_method, resumed.method.state_dict())
+    _assert_nested_equal(full_rng, _rng_probe(resumed))
 
 
 def test_ema_swap_restores_weights():
