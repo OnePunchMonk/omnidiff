@@ -6,6 +6,7 @@ import torch
 
 from omnidiff.core import Pipeline, sample
 from omnidiff.core.config import load_config
+from omnidiff.core.sampling import step
 from omnidiff.core.testing import tiny_config
 from omnidiff.distill import DistillTrainer
 from omnidiff.distill.trainer import EMA
@@ -39,7 +40,7 @@ def distill_config(path, teachers, tmp_path, *extra):
 
 @pytest.mark.parametrize("path", DISTILL_CONFIGS, ids=lambda p: p.stem)
 def test_distill_config_end_to_end(path, teachers, tmp_path):
-    cfg = distill_config(path, teachers, tmp_path)
+    cfg = distill_config(path, teachers, tmp_path, *(["distill.method.rounds=2"] if "progressive" in path.stem else []))
     tr = DistillTrainer(cfg)
     before = {k: v.clone() for k, v in tr.student.state_dict().items()}
     ckpt = tr.train()
@@ -277,3 +278,68 @@ def test_coupled_kd_student_starts_as_the_coupled_teacher(noise, teachers, tmp_p
     proc.coupled_gumbel = 1.0
     out = sample(tr.student, proc, b.x0.shape, cond=b.cond, timesteps=tr.grid)
     torch.testing.assert_close(out, b.x0)
+
+
+@pytest.mark.parametrize("guidance", [1.0, 2.0])
+@pytest.mark.parametrize("name", ["image_flow_progressive", "image_ddpm_progressive"])
+def test_progressive_target_is_two_teacher_steps(name, guidance, teachers, tmp_path):
+    tr = _trainer(teachers, tmp_path, name, "distill.steps=3", f"distill.teacher_guidance={guidance}")
+    m, p = tr.method, tr.process
+    x_t, cond = torch.randn(3, *tr.shape), tr.prompt_cond(3)
+    for t, mid, s in [(0.75, 0.625, 0.5), (0.25, 0.125, 0.0), (1.0, 0.75, 0.5), (1.0, 0.5, 0.0)]:  # data, and t = 1
+        t, mid, s = torch.tensor(t), torch.tensor(mid), torch.tensor(s)
+        x_s = m.two_teacher_steps(tr, x_t, t, mid, s, cond)
+        # the same two steps through the library sampler
+        x_mid = step(tr.teacher, tr.teacher_process, x_t, t, mid, cond, tr.dc.teacher_guidance).x_next
+        torch.testing.assert_close(x_s, step(tr.teacher, tr.teacher_process, x_mid, mid, s, cond,
+                                             tr.dc.teacher_guidance).x_next)
+        pred = m.target_pred(p, x_t, x_s, t, s)
+        torch.testing.assert_close(p.ode_step(pred, x_t, t, s), x_s, atol=1e-4, rtol=1e-4)
+        torch.testing.assert_close(p.to_x0(pred, x_t, t), m.x0_eps_target(p, x_t, x_s, t, s)[0], atol=1e-4, rtol=1e-4)
+
+
+def test_progressive_rounds_advance_and_halve_the_grid(teachers, tmp_path):
+    tr = _trainer(teachers, tmp_path, "image_flow_progressive", "distill.steps=3")
+    m = tr.method
+    assert [len(m.grid(tr, r)) - 1 for r in range(3)] == [8, 4, 2]
+    assert torch.equal(tr.grid, m.grid(tr, 0))
+    assert m.round_teacher is None  # round 0 distils the real teacher
+    for p, q in zip(tr.student.parameters(), tr.teacher.parameters()):  # the student starts as the teacher
+        torch.testing.assert_close(p, q)
+    tr._update("student")  # gives the optimiser state
+    assert tr.roles["student"].optimizer.state
+    with torch.no_grad():
+        for p in tr.student.parameters():
+            p.add_(0.01)
+    tr.roles["student"].ema.update(tr.student)
+    with tr.roles["student"].ema.swapped_in(tr.student):
+        expected = {k: v.clone() for k, v in tr.student.state_dict().items()}
+    m.schedule(1, tr)  # round_len = 1: step 1 starts round 1 and snapshots the EMA student
+    assert m.round == 1 and torch.equal(tr.grid, m.grid(tr, 1))
+    role = tr.roles["student"]
+    for k, v in m.round_teacher.state_dict().items():  # snapshot = EMA; student and EMA restart from it
+        torch.testing.assert_close(v, expected[k])
+        torch.testing.assert_close(tr.student.state_dict()[k], v)
+        if k in role.ema.shadow:
+            torch.testing.assert_close(role.ema.shadow[k], v)
+    assert not role.optimizer.state
+    sg = m.grid(tr, 1)
+    t, mid, s = m.sample_triple(tr, sg, tr.process.timesteps(2 * (len(sg) - 1), "cpu"), 64)
+    assert ((mid < t) & (mid > s)).all()
+    assert all(float(v) in set(tr.process.timesteps(8, "cpu").tolist()) for v in mid)
+    loss, metrics = m.loss("student", tr)
+    assert metrics["student_steps"] == 4 and torch.isfinite(loss)
+
+
+def test_progressive_training_ends_on_the_last_rounds_grid(teachers, tmp_path):
+    tr = _trainer(teachers, tmp_path, "image_flow_progressive", "distill.steps=3")
+    tr.train()
+    assert tr.method.round == tr.method.rounds - 1
+    assert torch.equal(tr.grid, tr.method.grid(tr, tr.method.rounds - 1)) and len(tr.grid) == 3
+
+
+def test_progressive_validates_steps_and_grid_overrides(teachers, tmp_path):
+    with pytest.raises(ValueError, match="steps >= rounds"):
+        _trainer(teachers, tmp_path, "image_flow_progressive", "distill.steps=2")
+    with pytest.raises(ValueError, match="student_steps"):
+        _trainer(teachers, tmp_path, "image_flow_progressive", "distill.steps=3", "distill.student_steps=4")
