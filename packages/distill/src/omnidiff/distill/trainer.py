@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import contextlib
 import copy
+import random
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -56,6 +57,8 @@ class DistillConfig:
     eval_every: int = 0
     eval_n: int = 128
     save_every: int = 0
+    save_state_every: int = 0
+    resume_from: str | None = None
 
 
 class EMA:
@@ -136,7 +139,7 @@ class DatasetSource:
 
 
 class DistillTrainer:
-    def __init__(self, cfg: dict):
+    def __init__(self, cfg: dict, resume_from=None):
         self.cfg = cfg
         self.dc = from_dict(DistillConfig, cfg.get("distill"))
         if self.dc.method is None:
@@ -145,6 +148,7 @@ class DistillTrainer:
         seed = cfg.get("seed", 0)
         seed_everything(seed)
         self.rng = np.random.default_rng(seed)
+        self.iteration = 0
         self.device = resolve_device(cfg.get("device", "auto"))
         self.gen = make_generator(seed, self.device)
         self.out_dir = Path(cfg.get("output_dir", "runs/distill")) / "distill"
@@ -189,6 +193,9 @@ class DistillTrainer:
 
         self.data = TeacherPool(self, self.dc.pool_size) if self.dc.data == "teacher" else DatasetSource(self, self.dc.data)
         self.method.setup(self)
+        resume_from = resume_from if resume_from is not None else self.dc.resume_from
+        if resume_from is not None:
+            self.load_state(resume_from)
 
     # ---- construction helpers -------------------------------------------------------------------
     def _with_sampler(self, sampler: str):
@@ -249,13 +256,91 @@ class DistillTrainer:
         metrics[f"{name}_loss"] = loss.item()
         return metrics
 
+    @staticmethod
+    def _state_path(path) -> Path:
+        path = Path(path)
+        return path if path.suffix == ".pt" else path / "state.pt"
+
+    def save_state(self, path) -> Path:
+        """Save the complete state needed to continue the same training stream."""
+        path = Path(path)
+        state_path = self._state_path(path)
+        state_path.parent.mkdir(parents=True, exist_ok=True)
+        roles = {}
+        for name, role in self.roles.items():
+            roles[name] = {
+                "model": role.model.state_dict(),
+                "optimizer": role.optimizer.state_dict(),
+                "ema": None if role.ema is None else {
+                    "decay": role.ema.decay,
+                    "shadow": role.ema.shadow,
+                },
+            }
+        data = None
+        if isinstance(self.data, TeacherPool):
+            data = {"type": "teacher_pool", "states": self.data.states, "x0": self.data.x0,
+                    "cond": self.data.cond, "prompts": self.data.prompts}
+        rng = {
+            "python": random.getstate(),
+            "numpy": np.random.get_state(),
+            "generator": self.gen.get_state(),
+            "trainer": self.rng.bit_generator.state,
+            "torch": torch.get_rng_state(),
+        }
+        if torch.cuda.is_available():
+            rng["cuda"] = torch.cuda.get_rng_state_all()
+        torch.save({"iteration": self.iteration, "roles": roles, "data": data, "method": self.method.state_dict(),
+                    "rng": rng}, state_path)
+        return path
+
+    def load_state(self, path) -> None:
+        """Load a state saved by :meth:`save_state`."""
+        state_path = self._state_path(path)
+        state = torch.load(state_path, map_location="cpu", weights_only=False)
+        saved_roles = state["roles"]
+        if set(saved_roles) != set(self.roles):
+            raise ValueError(f"checkpoint roles {sorted(saved_roles)} do not match trainer roles {sorted(self.roles)}")
+        for name, role in self.roles.items():
+            saved = saved_roles[name]
+            role.model.load_state_dict(saved["model"])
+            role.optimizer.load_state_dict(saved["optimizer"])
+            if role.ema is None:
+                if saved["ema"] is not None:
+                    raise ValueError(f"checkpoint has an EMA for role {name!r}, but the trainer does not")
+            else:
+                if saved["ema"] is None:
+                    raise ValueError(f"checkpoint has no EMA for role {name!r}")
+                role.ema.decay = saved["ema"]["decay"]
+                device = next(role.model.parameters()).device
+                role.ema.shadow = {k: v.to(device) for k, v in saved["ema"]["shadow"].items()}
+        data = state.get("data")
+        if data is not None:
+            if not isinstance(self.data, TeacherPool) or data.get("type") != "teacher_pool":
+                raise ValueError("teacher-pool checkpoint does not match trainer data")
+            self.data.states = data["states"].to(self.device)
+            self.data.x0 = data["x0"].to(self.device)
+            self.data.cond = {k: v.to(self.device) if isinstance(v, torch.Tensor) else v
+                              for k, v in data["cond"].items()}
+            self.data.prompts = data["prompts"]
+        self.method.load_state_dict(state.get("method", {}))
+        self.iteration = int(state["iteration"])
+        rng = state["rng"]
+        random.setstate(rng["python"])
+        np.random.set_state(rng["numpy"])
+        self.rng.bit_generator.state = rng["trainer"]
+        torch.set_rng_state(rng["torch"])
+        self.gen.set_state(rng["generator"])
+        if torch.cuda.is_available() and "cuda" in rng:
+            torch.cuda.set_rng_state_all(rng["cuda"])
+
     def train(self) -> Path:
         logger = JsonlLogger(self.out_dir / "log.jsonl")
         totals: dict[str, list[float]] = {}
-        for it in range(self.dc.steps):
+        for it in range(self.iteration, self.dc.steps):
             for name in self.method.schedule(it, self):
                 for k, v in self._update(name).items():
                     totals.setdefault(k, []).append(v)
+            self.iteration = it + 1
             last = it + 1 == self.dc.steps
             if (it + 1) % self.dc.log_every == 0 or last:
                 row = {k: float(np.mean(v)) for k, v in totals.items()}
@@ -265,6 +350,8 @@ class DistillTrainer:
                 totals = {}
             if self.dc.save_every and (it + 1) % self.dc.save_every == 0:
                 self.export(self.out_dir / f"step_{it + 1}")
+            if self.dc.save_state_every and (it + 1) % self.dc.save_state_every == 0:
+                self.save_state(self.out_dir / "state")
         return self.export(self.out_dir / "final")
 
     @contextlib.contextmanager

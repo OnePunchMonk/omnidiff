@@ -27,6 +27,14 @@ class Distiller:
     def setup(self, tr) -> None:
         pass
 
+    def state_dict(self) -> dict:
+        """Return method-owned state that is not part of a trainer role."""
+        return {}
+
+    def load_state_dict(self, state: dict) -> None:
+        """Restore method-owned state that is not part of a trainer role."""
+        pass
+
     def default_grid(self, tr) -> torch.Tensor:
         return tr.process.timesteps(4, tr.device)
 

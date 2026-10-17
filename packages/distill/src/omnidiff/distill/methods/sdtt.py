@@ -38,6 +38,13 @@ class SelfDistillationThroughTime(Distiller):
         self.round_teacher = copy.deepcopy(tr.teacher).requires_grad_(False).eval()
         self.round_len = max(1, tr.dc.steps // self.rounds)
 
+    def state_dict(self):
+        return {"round": self.round, "round_teacher": self.round_teacher.state_dict()}
+
+    def load_state_dict(self, state):
+        self.round = int(state["round"])
+        self.round_teacher.load_state_dict(state["round_teacher"])
+
     def schedule(self, it, tr):
         r = min(it // self.round_len, self.rounds - 1)
         if r != self.round:

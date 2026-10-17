@@ -156,6 +156,35 @@ def test_consistency_boundary_target_is_the_teacher_step(teachers, tmp_path):
     torch.testing.assert_close(tr.process.to_x0(pred, x, torch.zeros(2)), x)
 
 
+@pytest.mark.parametrize("name", ["image_flow_kd", "image_flow_dmd2", "text_masked_sdtt"])
+def test_distill_save_resume_is_bit_identical(name, teachers, tmp_path):
+    extra = ["distill.steps=4", "distill.log_every=100", "distill.eval_every=0"]
+    if name == "image_flow_dmd2":
+        extra.append("distill.method.fake_updates=1")
+
+    full = _trainer(teachers, tmp_path / "full", name, *extra)
+    full.train()
+    full_student = {k: v.clone() for k, v in full.student.state_dict().items()}
+    full_ema = None if full.roles["student"].ema is None else {
+        k: v.clone() for k, v in full.roles["student"].ema.shadow.items()
+    }
+
+    split = _trainer(teachers, tmp_path / "split", name, *extra[:])
+    split.dc.steps = 2
+    split.train()
+    state = split.save_state(split.out_dir / "state")
+    resumed_cfg = distill_config(ROOT / "configs" / "distill" / f"{name}.yaml", teachers, tmp_path / "split",
+                                  *extra, f"distill.resume_from={state}")
+    resumed = DistillTrainer(resumed_cfg)
+    resumed.train()
+
+    for k, v in full_student.items():
+        torch.testing.assert_close(resumed.student.state_dict()[k], v, atol=0, rtol=0)
+    if full_ema is not None:
+        for k, v in full_ema.items():
+            torch.testing.assert_close(resumed.roles["student"].ema.shadow[k], v, atol=0, rtol=0)
+
+
 def test_ema_swap_restores_weights():
     model = torch.nn.Linear(3, 3)
     ema = EMA(model, 0.5)
