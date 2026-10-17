@@ -80,6 +80,56 @@ def test_dmd2_generator_gradient_is_the_score_difference(teachers, tmp_path):
     torch.testing.assert_close(x0.grad, expected)
 
 
+def test_dmd2_backward_simulation_states_lie_on_the_student_grid(teachers, tmp_path):
+    """The generator is fed the student's own rollout state at grid[k], evaluated at t = grid[k], for every
+    k < K (never the final grid point), so training sees the states the trained grid meets at inference."""
+    from omnidiff.core.sampling import step
+
+    tr = _trainer(teachers, tmp_path, "image_flow_dmd2", "distill.student_steps=4")
+    m, seen, calls = tr.method, set(), []
+    real_pred = tr.student_pred
+    tr.student_pred = lambda x, t, cond, s=None, model=None: (calls.append((x, t)), real_pred(x, t, cond, s, model))[1]
+    for _ in range(24):
+        state = tr.gen.get_state()
+        calls.clear()
+        _, cond = m.generate(tr, 2)
+        (x, t), = calls
+        k = [j for j, g in enumerate(tr.grid) if float(g) == float(t)]
+        assert len(k) == 1 and k[0] < len(tr.grid) - 1
+        tr.gen.set_state(state)  # replay the rollout by hand with the same noise
+        ref = tr.process.prior((2, *tr.shape), cond, tr.device, tr.gen)
+        for j in range(k[0]):
+            ref = step(tr.student, tr.student_process, ref, tr.grid[j], tr.grid[j + 1], cond, generator=tr.gen).x_next
+        torch.testing.assert_close(x, ref)
+        seen.add(k[0])
+    assert seen == set(range(len(tr.grid) - 1))
+
+
+def test_dmd2_rollout_equals_inference_sampling_and_is_detached(teachers, tmp_path):
+    """student_rollout(k) is the inference sampler's state at grid[k], also on a non-uniform grid. It carries
+    no gradient (as in DMD2, earlier steps are simulated without grad); only the final x0 prediction does."""
+    tr = _trainer(teachers, tmp_path, "image_flow_dmd2", "distill.student_timesteps=[1.0,0.6,0.3,0.1,0.0]")
+    assert tr.grid.tolist() == pytest.approx([1.0, 0.6, 0.3, 0.1, 0.0])
+    cond = tr.prompt_cond(3)
+    for k in range(len(tr.grid)):
+        state = tr.gen.get_state()
+        x = tr.student_rollout(cond, k, 3)
+        tr.gen.set_state(state)
+        traj = sample(tr.student, tr.student_process, (3, *tr.shape), cond, timesteps=tr.grid, generator=tr.gen,
+                      keep_trajectory=True)
+        torch.testing.assert_close(x, traj.xs[:, k])
+        assert not x.requires_grad
+    x0, _ = tr.method.generate(tr, 3)
+    assert x0.requires_grad
+
+
+def test_dmd2_last_stage_prob(teachers, tmp_path):
+    tr = _trainer(teachers, tmp_path, "image_flow_dmd2", "distill.method.last_stage_prob=1.0")
+    assert {tr.method._stage(tr) for _ in range(20)} == {len(tr.grid) - 2}
+    tr.method.last_stage_prob = None
+    assert {tr.method._stage(tr) for _ in range(60)} == set(range(len(tr.grid) - 1))
+
+
 def test_flow_map_student_starts_as_teacher_euler(teachers, tmp_path):
     tr = _trainer(teachers, tmp_path, "image_flow_flow_map")
     cond = tr.prompt_cond(4)
