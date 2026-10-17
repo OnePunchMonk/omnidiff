@@ -34,10 +34,11 @@ from omnidiff.reward.scorecard import run_scorecard, save, to_markdown
 
 GROUPS = {
     "image_flow_grpo": ["image_flow_kd", "image_flow_consistency", "image_flow_flow_map", "image_flow_dmd2",
-                        "image_flow_dmd2_gan", "image_flow_rcm"],
-    "image_ddpm_ddpo": ["image_ddpm_dmd2"],
-    "video_flow_grpo": ["video_flow_dmd2", "video_flow_flow_map"],
-    "text_masked_grpo": ["text_masked_kd", "text_masked_sdtt", "text_masked_coupled_kd"],
+                        "image_flow_dmd2_gan", "image_flow_rcm", "image_flow_progressive"],
+    "image_ddpm_ddpo": ["image_ddpm_dmd2", "image_ddpm_kd", "image_ddpm_consistency", "image_ddpm_progressive"],
+    "video_flow_grpo": ["video_flow_dmd2", "video_flow_flow_map", "video_flow_kd", "video_flow_consistency",
+                        "video_flow_rcm"],
+    "text_masked_grpo": ["text_masked_kd", "text_masked_sdtt", "text_masked_coupled_kd", "text_masked_dcd"],
 }
 # Tuned baselines: the teacher with a sharper or different sampler, at the same step counts.
 VARIANTS = {
