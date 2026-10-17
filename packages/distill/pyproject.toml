@@ -9,6 +9,9 @@ description = "Few-step distillation: KD, DMD2, consistency, flow maps and SDTT 
 requires-python = ">=3.10"
 dependencies = ["omnidiff-core", "omnidiff-data", "omnidiff-reward"]
 
+[project.optional-dependencies]
+export = ["safetensors"]
+
 [tool.hatch.build.targets.wheel]
 packages = ["src/omnidiff"]
 
