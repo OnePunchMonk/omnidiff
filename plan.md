@@ -1,5 +1,7 @@
 # Build plan to Friday 2026-10-23
 
+Tracking: [goals and plan, #2](https://github.com/OnePunchMonk/omnidiff/issues/2) and [benchmark runs, #3](https://github.com/OnePunchMonk/omnidiff/issues/3).
+
 Two layers ship by Friday: **distillation complete** (milestones M1 and M2 in [docs/GOAL_AND_PLAN.md](docs/GOAL_AND_PLAN.md), plus the CPU half of Phase E), then **the reward and eval harness** (M3). Phase D, the real-scale reproduction, is out of this window: it needs GPU time and a cost estimate first.
 
 ## Definition of done
@@ -22,6 +24,7 @@ Two layers ship by Friday: **distillation complete** (milestones M1 and M2 in [d
 |---|---|---|
 | implementer | Sonnet, low effort | one workstream per agent, in its own git worktree and branch (`ws/<id>`); writes code, tests and a notes file; commits and never pushes |
 | reviewer | Opus, medium effort | reviews each branch's diff against this plan and the repo principles; writes findings ranked by severity |
+| second reviewer, designer, implementer | Codex (`gpt-5.6-luna`) | an independent review of each branch; design critiques and interface specs; some coding workstreams (C1, ARCH, D7) |
 | implementer (again) | the same Sonnet agent | patches every finding, or replies with a reason for not doing so |
 | integrator | Haiku, low effort | merges reviewed branches into `main` in the order below, runs the full test suite, pushes; stops and reports on any conflict or failure |
 | orchestrator | this session | writes the plan, starts the agents, resolves conflicts, runs long CPU experiments, writes `docs/results` |
@@ -44,9 +47,14 @@ Rules for every agent:
 | D3 | **Progressive distillation** for continuous processes (scope §8, not started). Rounds of "1 student step = 2 teacher steps", halving the steps each round; Salimans and Ho target in x0 space. | new `methods/progressive.py`, config, tests | a test checks the target equals two exact teacher DDIM/Euler steps; rounds advance and the grid halves; a toy config trains |
 | D4 | **Discrete consistency for text** (scope §4 `dcd`). Read arXiv 2607.19686 and 2609.33947 and implement a multi-step / multi-mask consistency objective for masked diffusion, compared against `coupled_kd`. | new `methods/dcd.py`, config, tests, `docs/notes/D4.md` with the paper reading | a correctness test of the objective's fixed point; a toy config trains; notes compare it with `coupled_kd` at 1/2/4/8 steps |
 | D5 | **Export (Phase E, CPU half).** `omnidiff export --ckpt ... --out ...` writes a framework-neutral student bundle: weights (`model.safetensors` if `safetensors` is installed, `torch.save` otherwise), `sampler.json` (process, sampler, timesteps, guidance, provenance) and the model config. Add a loader and a round-trip test. | new `distill/export.py`, CLI subcommand, tests, `docs/notes/D5.md` with the schema | the round trip reproduces samples bit-for-bit on CPU; the schema is documented |
+| D7 | **Exact save and resume** for `DistillTrainer`. Checkpoint every role's weights, optimiser and EMA, the RNG states (torch, numpy, generator), the iteration, method state (SDTT round, consistency target net, fake score) and the teacher-pool identity (seed and size, or the pool itself). | `trainer.py` (`save_state` / `resume_from`), method `state_dict` hooks, tests | a test shows that N uninterrupted steps and N/2 + resume + N/2 give bit-identical student weights for kd, dmd2 and sdtt |
+| C1 | **Config coverage.** Distill configs for every method on every process it supports: video flow KD, consistency, rCM; DDPM-image KD and consistency. | new `configs/distill/*.yaml` | the end-to-end config test covers them |
+| ARCH | **Architecture doc**, `docs/ARCHITECTURE.md`: package map, core abstractions, data flows, extension recipes, the invariants the tests enforce. | `docs/ARCHITECTURE.md` | it is accurate against the code, as checked by review |
 | D6 | **Multi-seed harness.** `scripts/distill_toy_report.py --seeds 0 1 2` trains distill runs per seed (teachers fixed), aggregates mean ± std, and writes the same tables. Add `model.time_scale: 10` teacher variants of the image and video flow configs as new configs. Code only: the orchestrator does the long runs. | `scripts/distill_toy_report.py`, new configs | a dry-run test on tiny configs covers the aggregation |
 
-Order: D1–D6 start in parallel. D2 and D1 both touch DMD2: D2 adds a subclass or a hook and leaves D1's code alone. The merge order is D5, D6, D3, D1, D2, D4.
+Order: D1–D6, C1 and ARCH start in parallel. D2 and D1 both touch DMD2: D2 adds a subclass or a hook and leaves D1's code alone. D7 touches the trainer, so it rebases onto main after D1 and D3. The merge order is D5, D6, C1, ARCH, D3, D1, D2, D4, D7.
+
+Evaluation provenance (from the design review), which D6 and R4 should follow: freeze the prompt IDs, the teacher checkpoint, the pool seed, the evaluation seeds, the NFE grid and the metric version, and write raw per-seed JSON before aggregating it into markdown.
 
 After the merges (Tue 20 to Wed 21, orchestrator): 3-seed runs of all distill configs on both teacher time scales, then rewrite `docs/results/distillation_toy.md` and close scope §8.
 
@@ -59,7 +67,9 @@ After the merges (Tue 20 to Wed 21, orchestrator): 3-seed runs of all distill co
 | R3 | **Reward-reliability study.** (a) Agreement: rank correlation between rewards and the dataset oracles over shared samples. (b) Hacking probes: RL against reward A, tracking reward A, a held-out reward B and the oracle, to find where they diverge. Library code plus a script. | new `reward/reliability.py`, `scripts/reward_reliability.py`, tests | the metric code is tested on synthetic data with known correlation; the script runs on CPU in under 15 minutes; notes report the result |
 | R4 | **`omnidiff eval`.** Promote the scorecard into eval suites: an `EVALS` registry; `omnidiff eval --suite ... --ckpt ...` with multi-seed mean ± CI; a stable JSON schema versioned in the output. | `reward/scorecard.py`, new `reward/eval.py`, `core/registry.py` (add `EVALS`), CLI, tests | the existing scorecard tests still pass; a schema test; CI widths shrink with n on a synthetic check |
 
-Order: R1–R4 in parallel. R2 depends on R1's client API, so R2 codes against the client interface in this plan and the review checks the two match. The merge order is R4, R1, R3, R2.
+Interface specs, file ownership and JSON schemas for R1–R4: [docs/notes/R-design.md](docs/notes/R-design.md). The miles hook is `async def custom_rm(args, samples, **kwargs) -> list[float]`, loaded with `--custom-rm-path`; R2 must verify it against a pinned miles revision.
+
+Order: R1–R4 in parallel. R2 depends on R1's client API, so R2 codes against the client interface in R-design.md and the review checks the two match. The merge order is R4, R1, R3, R2.
 
 ## Friday 23
 
@@ -70,5 +80,8 @@ Order: R1–R4 in parallel. R2 depends on R1's client API, so R2 codes against t
 
 | id | status |
 |---|---|
-| D1–D6 | not started |
+| D5, D6 | coded; in review |
+| C1, ARCH | coded by Codex; in review |
+| D1–D4 | coding |
+| D7 | coding (Codex) |
 | R1–R4 | not started |
