@@ -21,7 +21,8 @@ class FlowMapDistillation(Distiller):
         u_tgt = v(x_t, t) - (t - s) * d/dt u(x_t, t, s),   d/dt = v . grad_x + partial_t,
 
     where d/dt u is one forward-mode JVP (or a finite difference) under stop-gradient. With s = t the
-    target is the teacher's velocity; with s = 0 the student is a continuous-time consistency model.
+    target is the teacher's velocity. With ``s_mode: zero`` the student is a continuous-time consistency
+    model, and it is exported with the renoise sampler.
     One student serves any step count. The zero-initialised s-embedding means it starts as the teacher's
     Euler sampler.
     """
@@ -37,6 +38,8 @@ class FlowMapDistillation(Distiller):
             raise ValueError("s_mode must be uniform|zero and derivative jvp|finite_difference")
         self.equal_ratio, self.s_mode, self.derivative, self.fd_eps = equal_ratio, s_mode, derivative, fd_eps
         self.time_sampling, self.adaptive_p, self.adaptive_c = time_sampling, adaptive_p, adaptive_c
+        # s = 0 only: a consistency model, sampled by jumping to x0 and re-noising
+        self.sampler = "renoise" if s_mode == "zero" else "ode"
 
     def sample_times(self, B: int, tr):
         if self.time_sampling == "uniform":

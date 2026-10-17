@@ -145,3 +145,25 @@ def test_ema_swap_restores_weights():
     with ema.swapped_in(model):
         torch.testing.assert_close(model.weight, ema.shadow["weight"])
     torch.testing.assert_close(model.weight, live)
+
+
+def test_renoise_student_is_rl_tunable(teachers, tmp_path):
+    """A few-step student exported with the renoise sampler is a policy with exact log-probs:
+    posttrain's RL trainer runs on it unchanged, and a fresh rollout is on-policy."""
+    from omnidiff.core.sampling import step
+    from omnidiff.posttrain import RLTrainer
+
+    ckpt = _trainer(teachers, tmp_path, "image_flow_dmd2").train()
+    cfg = load_config(ckpt / "config.yaml", ["device=cpu", f"output_dir={tmp_path}/rl", f"rl.init_from={ckpt}",
+                                             "rl.epochs=1", "rl.prompts_per_epoch=2", "rl.group_size=2",
+                                             "rl.rollout_batch_size=4", "rl.train_batch_size=2"])
+    tr = RLTrainer(cfg)
+    ro = tr.rollout()
+    assert ro.traj.xs.shape[1] == len(cfg["sampling"]["timesteps"])
+    assert ro.traj.stochastic.tolist() == [True] * (len(cfg["sampling"]["timesteps"]) - 2) + [False]
+    c, traj = tr.c, ro.traj
+    for k in range(traj.xs.shape[1] - 2):
+        tr_k = step(tr.model, c.process, traj.xs[:, k], traj.timesteps[k], traj.timesteps[k + 1], ro.cond,
+                    x_next=traj.xs[:, k + 1])
+        torch.testing.assert_close(tr_k.log_prob, traj.log_probs[:, k], atol=1e-4, rtol=1e-4)
+    tr.update(ro)

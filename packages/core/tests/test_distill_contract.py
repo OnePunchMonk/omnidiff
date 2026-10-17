@@ -115,3 +115,15 @@ def test_sample_with_explicit_timesteps():
     assert traj.xs.shape[1] == 3 and traj.stochastic.tolist() == [True, False]
     with pytest.raises(ValueError, match="descending"):
         sample(model, proc, (1, 2, 4, 4), {"class_ids": torch.tensor([0])}, timesteps=[0.0, 1.0])
+
+
+def test_renoise_asks_two_time_models_for_the_jump_to_data():
+    model, proc = _image_model(two_time=True), FlowMatching(sampler="renoise")
+    seen = []
+    orig = model.forward
+    model.forward = lambda x, t, cond=None, drop_cond=None, s=None: seen.append(float(s)) or orig(x, t, cond, drop_cond, s)
+    sample(model, proc, (1, 2, 4, 4), {"class_ids": torch.tensor([0])}, timesteps=[1.0, 0.5, 0.0])
+    assert seen == [0.0, 0.0]
+    seen.clear()
+    sample(model, FlowMatching(sampler="ode"), (1, 2, 4, 4), {"class_ids": torch.tensor([0])}, timesteps=[1.0, 0.5, 0.0])
+    assert seen == [0.5, 0.0]

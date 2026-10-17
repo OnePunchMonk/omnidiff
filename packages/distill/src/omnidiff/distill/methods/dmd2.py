@@ -63,7 +63,8 @@ class DMD2(Distiller):
         k = int(tr.rng.integers(0, len(tr.grid) - 1)) if self.backward_sim else 0
         x = tr.student_rollout(cond, k, n)
         t = tr.grid[k]
-        return tr.process.to_x0(tr.student_pred(x, t, cond), x, t), cond
+        # s = 0 asks a two-time (flow-map) student for the jump straight to data; one-time models ignore it
+        return tr.process.to_x0(tr.student_pred(x, t, cond, s=torch.zeros(())), x, t), cond
 
     def _noisy(self, tr, x0):
         tau = torch.rand(x0.shape[0], device=x0.device) * (self.tau_max - self.tau_min) + self.tau_min
@@ -87,7 +88,9 @@ class DMD2(Distiller):
                 metrics.update(d_loss=d_loss.item(), d_real=torch.sigmoid(d_real).mean().item())
             return loss, metrics
 
-        x0_g, cond = self.generate(tr, n)
+        return self.generator_loss(tr, *self.generate(tr, n))
+
+    def generator_loss(self, tr, x0_g, cond):
         x_tau, tau = self._noisy(tr, x0_g)
         with torch.no_grad():
             real = tr.process.to_x0(tr.teacher_pred(x_tau, tau, cond), x_tau, tau)

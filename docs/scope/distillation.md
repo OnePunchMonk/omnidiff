@@ -1,6 +1,6 @@
 # Scope: few-step distillation (`omnidiff-distill`)
 
-Status: scoping, written 2026-10-17. The landscape claims below were checked against repos and docs on that date. Papers marked † were seen only as titles or abstracts and haven't been read in full.
+Status: **v0 in progress**. Phases A and B are implemented; Phase C has started. Written 2026-10-17. The landscape claims below were checked against repos and docs on that date. Papers marked † were seen only as titles or abstracts and haven't been read in full.
 
 ## TL;DR
 
@@ -149,11 +149,27 @@ Models of 1B+ parameters, FSDP, sparse attention, causal/streaming students (Sel
 - **Toy-to-real transfer.** Blob and toy-text results won't transfer automatically. Phase D exists to anchor one result at real scale.
 - **Budget.** Anything beyond Phase C needs GPU time. Each GPU run gets a written cost estimate beforehand.
 
-## 7. Decisions needed from you
+## 7. Decisions (2026-10-17)
 
-1. **Primary differentiator:** G1 (text distillation) or G2 (RL ∘ distillation)? I recommend G2 as the research thread and G1 as the visible feature.
-2. **Re-implement or interoperate.** v0 re-implements in pure PyTorch, consistent with the repo. The alternative is to reuse FastGen methods behind our interface for scale. That would break the torch+numpy-only rule for `omnidiff-distill`, but not for core.
-3. **Phase D target model**, and whether to ask for compute or stay CPU-only.
+1. **Primary differentiator.** G2 (RL ∘ distillation) is the research thread and G1 (text distillation) is the visible feature.
+2. **Re-implement in pure PyTorch.** There is no FastGen dependency. Reference behaviour is pinned by tests instead.
+3. **Phase D is deferred.** The work stays on CPU toys until there is a cost estimate and a compute source.
+
+## 8. v0 implementation status
+
+| item | status | where |
+|---|---|---|
+| process helpers (`q_sample`, `to_x0`, `to_eps`, `ode_step`), explicit grids | done | `omnidiff.core.processes`, `sampling.resolve_timesteps` |
+| renoise sampler as an exact Gaussian policy | done | `ContinuousProcess.renoise_transition` |
+| two-time models, math attention for JVP | done | `Denoiser(two_time=True)`, `layers.math_attention` |
+| multi-role trainer, teacher pool, EMA, export with sampler spec | done | `omnidiff.distill.trainer` |
+| `kd`, `dmd2` (+ GAN head), `consistency`, `flow_map`, `sdtt` | done | `omnidiff.distill.methods` |
+| scorecard: FD / precision / recall vs teacher and data, diversity, oracles, reward, latency | done | `omnidiff.reward.scorecard`, dataset `oracle()` |
+| RL on few-step students | works end to end, experiments running | `test_renoise_student_is_rl_tunable` |
+| toy results | see [docs/results/distillation_toy.md](../results/distillation_toy.md) | |
+| discrete consistency (DCD / multi-mask) | not started; read 2609.33947 and 2607.19686 first | |
+| rCM (flow map with `s_mode: zero` + DMD regulariser) | not started; needs composable objectives | |
+| progressive distillation rounds for continuous processes | not started | |
 
 ## References
 

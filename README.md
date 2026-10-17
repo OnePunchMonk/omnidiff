@@ -2,7 +2,7 @@
 
 A diffusion monorepo for **language, image and video**, built in plain PyTorch and NumPy. It covers the layers that SGLang Diffusion (serving) and miles-diffusion (large-scale RL) leave open, on one shared core.
 
-Today it has the core plus RL/SFT post-training. Few-step distillation is next. Every component plugs in through a registry.
+Today it has the core, RL/SFT post-training, and few-step distillation (KD, DMD2, consistency, flow maps and SDTT), plus a scorecard that compares students and teachers across step counts. Every component plugs in through a registry.
 
 `omnidiff-core` depends only on `torch`, `numpy` and `pyyaml`. It has no `diffusers`, `transformers`, `accelerate` or `trl`, so everything that runs is in this repo.
 
@@ -20,14 +20,14 @@ Every diffusion sampler is an MDP. The state is `(x_t, t, cond)`, the action is 
 
 ## Monorepo layout
 
-Goal, layer map and roadmap: **[docs/GOAL_AND_PLAN.md](docs/GOAL_AND_PLAN.md)**. Next deep dive: **[docs/scope/distillation.md](docs/scope/distillation.md)**.
+Goal, layer map and roadmap: **[docs/GOAL_AND_PLAN.md](docs/GOAL_AND_PLAN.md)**. Distillation scope and status: **[docs/scope/distillation.md](docs/scope/distillation.md)**.
 
 ```
 packages/
   core/       omnidiff-core       omnidiff.core       processes, models, sampling, inference, CLI   (torch + numpy only)
   posttrain/  omnidiff-posttrain  omnidiff.posttrain  SFT, GRPO, DDPO                               done
-  distill/    omnidiff-distill    omnidiff.distill    few-step distillation                         scoping
-  reward/     omnidiff-reward     omnidiff.reward     rewards -> reward/eval harness                seed
+  distill/    omnidiff-distill    omnidiff.distill    KD, DMD2, consistency, flow map, SDTT         v0
+  reward/     omnidiff-reward     omnidiff.reward     rewards, set metrics, scorecard               seed+
   data/       omnidiff-data       omnidiff.data       datasets -> data engine                       seed
 configs/      one YAML per recipe (sft + rl + sampling sections)
 docs/         goal, plan, per-layer scope docs
@@ -65,6 +65,10 @@ uv run omnidiff sample --ckpt runs/image_flow_grpo/rl/final --prompt 0 --prompt 
 uv run omnidiff sft -c configs/text_masked_grpo.yaml
 uv run omnidiff rl  -c configs/text_masked_grpo.yaml
 uv run omnidiff sample --ckpt runs/text_masked_grpo/rl/final --prompt "the cat" --prompt "a dog"
+
+# few-step distillation of a trained teacher, then compare across step counts
+uv run omnidiff distill -c configs/distill/image_flow_dmd2.yaml
+uv run omnidiff scorecard --ref runs/image_flow_grpo/sft/final --ckpt dmd2=runs/distill/image_flow_dmd2/distill/final
 
 uv run omnidiff list                     # everything registered by installed packages
 ```

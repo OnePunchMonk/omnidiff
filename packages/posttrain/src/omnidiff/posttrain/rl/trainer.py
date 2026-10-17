@@ -96,7 +96,8 @@ class RLTrainer:
             sub = index_cond(cond, slice(i, i + rl.rollout_batch_size))
             n = len(prompts[i: i + rl.rollout_batch_size])
             trajs.append(sample(self.model, c.process, (n, *c.sample_shape), sub, c.sampling.num_steps,
-                                c.sampling.guidance_scale, generator=self.gen, keep_trajectory=True))
+                                c.sampling.guidance_scale, generator=self.gen, keep_trajectory=True,
+                                timesteps=c.sampling.timesteps))
         traj = Trajectory.cat(trajs)
         if not traj.stochastic.any():
             raise ValueError("sampler is deterministic (eta=0 / noise_level=0); RL needs a stochastic policy")

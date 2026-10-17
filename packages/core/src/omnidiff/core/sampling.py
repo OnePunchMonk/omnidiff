@@ -55,7 +55,10 @@ def predict(model, x, t, cond, guidance_scale: float = 1.0, process: DiffusionPr
 
 
 def step(model, process, x_t, t, t_next, cond, guidance_scale=1.0, x_next=None, generator=None) -> Transition:
-    pred = predict(model, x_t, t, cond, guidance_scale, process, s=t_next)
+    # A two-time model is asked for the jump it takes: to t_next, or straight to data (s = 0) when
+    # the sampler predicts x0 and re-noises.
+    s = torch.zeros_like(torch.as_tensor(t_next)) if getattr(process, "sampler", None) == "renoise" else t_next
+    pred = predict(model, x_t, t, cond, guidance_scale, process, s=s)
     return process.transition(pred, x_t, t, t_next, x_next=x_next, generator=generator)
 
 

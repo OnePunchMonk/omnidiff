@@ -36,7 +36,7 @@ What SGLang Diffusion and miles-diffusion miss, re-checked 2026-10-17. Two corre
 |---|---|---|---|---|
 | Core: processes, models, sampling, inference | `omnidiff-core` | **done (v0.1)** | n/a | the shared foundation |
 | RL/SFT post-training | `omnidiff-posttrain` | **done (v0.1)**, toy-verified for all three modalities | miles-diffusion (scale) | the research bed: same algorithms at toy scale, plus text diffusion |
-| **Few-step distillation** | `omnidiff-distill` | **next; scoping → [scope/distillation.md](scope/distillation.md)** | FastGen, FastVideo, rcm (continuous, at scale) | open for text, for RL ∘ distillation, and for student evaluation |
+| **Few-step distillation** | `omnidiff-distill` | **v0 in progress**: KD, DMD2, consistency, flow map, SDTT, scorecard ([scope](scope/distillation.md)) | FastGen, FastVideo, rcm (continuous, at scale) | open for text, for RL ∘ distillation, and for student evaluation |
 | Reward and eval harness | `omnidiff-reward` | seed (toy rewards) | GenEval, VBench and others, scattered; miles has some scorers | unified, batched, reliability-aware; the backend miles could call |
 | Data engine | `omnidiff-data` | seed (toy datasets) | NeMo curator, img2dataset | lightweight recaption, filter, dedupe, latent precompute |
 | Causal / streaming video training | later (`omnidiff-causal`) | not started | FastVideo, rcm (Self-Forcing, Causal-rCM) | where world models are heading; grows out of distill |
@@ -51,7 +51,7 @@ What SGLang Diffusion and miles-diffusion miss, re-checked 2026-10-17. Two corre
 | milestone | contents | exit criteria | compute |
 |---|---|---|---|
 | **M0: foundation** ✅ | core (masked, Gaussian, flow; DiT; text/image/video adapters; CFG; LoRA), posttrain (SFT, GRPO, DDPO, KL), uv workspace, entry-point plugins, CLI | 31 CPU tests green; reward rises for all four shipped configs | CPU |
-| **M1: distillation v0** | Phases A and B of the scope doc: few-step samplers in core, multi-role `DistillTrainer`, KD, DMD2, SDTT, consistency (CD→sCM), flow map, scorecard v0 | exit criteria in scope doc §5 | CPU |
+| **M1: distillation v0** (in progress) | Phases A and B of the scope doc: few-step samplers in core, multi-role `DistillTrainer`, KD, DMD2, SDTT, consistency (CD→sCM), flow map, scorecard v0 | exit criteria in scope doc §5 | CPU |
 | **M2: RL ∘ distillation** | Phase C: GRPO on few-step students, reward-regularised DMD2, order-effect study | a written result, positive or negative | CPU, maybe 1 small GPU |
 | **M3: reward/eval harness** | batched reward service, a reward-reliability study (agreement and hacking probes), scorecard promoted to a shared eval; adapter for miles' reward flags | miles-diffusion can call an omnidiff reward via its plug-in flags | low |
 | **M4: real-scale anchor** | Phase D: one small real model per modality (for example an MDLM-class dLLM, ImageNet-64 EDM2); reproduce one published distillation number | within noise of the paper | **GPU: estimate and ask first** |
@@ -68,4 +68,4 @@ After M5, choose the next layer from the map: causal video (it follows from dist
 
 ## Open decisions
 
-See [scope/distillation.md §7](scope/distillation.md#7-decisions-needed-from-you): primary differentiator, re-implement versus interoperate with FastGen, and the Phase D target and compute.
+Distillation decisions are recorded in [scope/distillation.md §7](scope/distillation.md#7-decisions-2026-10-17). Still open: the Phase D target model and where its compute comes from.

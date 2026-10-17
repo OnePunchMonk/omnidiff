@@ -1,0 +1,16 @@
+# G2 order study, arm "RL then distil": DMD2 on the Flow-GRPO-tuned teacher (redness reward).
+# Compare with arm "distil then RL": omnidiff rl on the image_flow_dmd2 student (scripts/g2_order_study.sh).
+seed: 0
+device: auto
+output_dir: runs/distill/image_flow_dmd2_from_rl
+teacher: runs/image_flow_grpo/rl/final     # produced by: omnidiff rl -c configs/image_flow_grpo.yaml
+
+distill:
+  method: {type: dmd2, fake_updates: 5}
+  student_steps: 4
+  data: teacher
+  steps: 600
+  batch_size: 32
+  lr: 2e-5
+  betas: [0.0, 0.999]
+  eval_every: 200
