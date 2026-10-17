@@ -1,0 +1,13 @@
+# SDTT: three rounds, 32 -> 16 -> 8 -> 4 steps, on the toy corpus.
+seed: 0
+device: auto
+output_dir: runs/distill/text_masked_sdtt
+teacher: runs/text_masked_grpo/sft/final     # produced by: omnidiff sft -c configs/text_masked_grpo.yaml
+
+distill:
+  method: {type: sdtt, start_steps: 32, rounds: 3, sub_steps: 2}
+  data: text_lines
+  steps: 3000
+  batch_size: 64
+  lr: 1e-4
+  eval_every: 1000

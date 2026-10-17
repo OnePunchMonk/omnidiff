@@ -1,0 +1,15 @@
+# Text KD baseline: 4-step student trained on teacher rollouts' final tokens.
+seed: 0
+device: auto
+output_dir: runs/distill/text_masked_kd
+teacher: runs/text_masked_grpo/sft/final     # produced by: omnidiff sft -c configs/text_masked_grpo.yaml
+
+distill:
+  method: {type: kd}
+  student_steps: 4
+  data: teacher
+  pool_size: 4096
+  steps: 2000
+  batch_size: 64
+  lr: 1e-4
+  eval_every: 1000

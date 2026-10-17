@@ -809,10 +809,14 @@ version = "0.1.0"
 source = { editable = "packages/reward" }
 dependencies = [
     { name = "omnidiff-core" },
+    { name = "omnidiff-data" },
 ]
 
 [package.metadata]
-requires-dist = [{ name = "omnidiff-core", editable = "packages/core" }]
+requires-dist = [
+    { name = "omnidiff-core", editable = "packages/core" },
+    { name = "omnidiff-data", editable = "packages/data" },
+]
 
 [[package]]
 name = "omnidiff-workspace"

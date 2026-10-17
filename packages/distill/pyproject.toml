@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "omnidiff-distill"
 version = "0.1.0"
-description = "Few-step distillation (scoping)."
+description = "Few-step distillation: KD, DMD2, consistency, flow maps and SDTT for text, image and video diffusion."
 requires-python = ">=3.10"
 dependencies = ["omnidiff-core", "omnidiff-data", "omnidiff-reward"]
 
@@ -14,3 +14,6 @@ packages = ["src/omnidiff"]
 
 [project.entry-points."omnidiff.plugins"]
 distill = "omnidiff.distill"
+
+[project.entry-points."omnidiff.commands"]
+distill = "omnidiff.distill.cli:register"

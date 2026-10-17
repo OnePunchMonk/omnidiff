@@ -1,0 +1,15 @@
+# DMD2 on the Gaussian (VP, epsilon) teacher.
+seed: 0
+device: auto
+output_dir: runs/distill/image_ddpm_dmd2
+teacher: runs/image_ddpm_ddpo/sft/final     # produced by: omnidiff sft -c configs/image_ddpm_ddpo.yaml
+
+distill:
+  method: {type: dmd2, fake_updates: 5, tau_max: 0.9}
+  student_steps: 4
+  data: teacher
+  steps: 600
+  batch_size: 32
+  lr: 2e-5
+  betas: [0.0, 0.999]
+  eval_every: 200

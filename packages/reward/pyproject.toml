@@ -7,10 +7,13 @@ name = "omnidiff-reward"
 version = "0.1.0"
 description = "Reward functions and (planned) the reward/eval harness."
 requires-python = ">=3.10"
-dependencies = ["omnidiff-core"]
+dependencies = ["omnidiff-core", "omnidiff-data"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/omnidiff"]
 
 [project.entry-points."omnidiff.plugins"]
 reward = "omnidiff.reward"
+
+[project.entry-points."omnidiff.commands"]
+reward = "omnidiff.reward.cli:register"

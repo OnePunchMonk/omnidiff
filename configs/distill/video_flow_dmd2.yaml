@@ -1,0 +1,15 @@
+# DMD2 on the moving-blob video teacher.
+seed: 0
+device: auto
+output_dir: runs/distill/video_flow_dmd2
+teacher: runs/video_flow_grpo/sft/final     # produced by: omnidiff sft -c configs/video_flow_grpo.yaml
+
+distill:
+  method: {type: dmd2, fake_updates: 5}
+  student_steps: 4
+  data: teacher
+  steps: 600
+  batch_size: 32
+  lr: 2e-5
+  betas: [0.0, 0.999]
+  eval_every: 200
