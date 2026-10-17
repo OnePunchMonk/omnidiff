@@ -5,6 +5,16 @@ Prerequisites (CPU, minutes each):
     uv run omnidiff distill -c configs/distill/<name>.yaml  for each student below
 Usage:
     uv run python scripts/distill_toy_report.py [-n 512]
+
+Multi-seed mode (`--seeds 0 1 2`): teachers stay fixed and each student is trained once per seed with `seed=<s>`
+into runs/distill/<name><suffix>_s<s> (skipped when its final/model.pt exists). Seed 0 reuses the single-seed run
+runs/distill/<name><suffix> when that exists, which is valid only if its config has not changed since (pass
+--no-reuse-seed0 to retrain it). Every seed is scored with the same prompts and settings, and rows are reported as
+mean ± std over seeds (population std). Reference rows are deterministic and carry no std.
+    uv run python scripts/distill_toy_report.py --seeds 0 1 2 [--teacher-suffix _ts10] [--dry-run]
+`--teacher-suffix _ts10` swaps each teacher for runs/<teacher><suffix> or, failing that, runs/<teacher minus its
+last word><suffix> (so image_flow_grpo -> runs/image_flow_ts10, trained by configs/image_flow_grpo_ts10.yaml).
+Groups without such a teacher are skipped.
 """
 
 from __future__ import annotations
@@ -12,6 +22,8 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
+from omnidiff.reward.aggregate import aggregate
+from omnidiff.reward.aggregate import to_markdown as agg_markdown
 from omnidiff.reward.scorecard import run_scorecard, save, to_markdown
 
 GROUPS = {
@@ -28,6 +40,7 @@ VARIANTS = {
     "video_flow_grpo": {"renoise": ["process.sampler=renoise"], "shift3": ["process.shift=3.0"]},
     "text_masked_grpo": {"T0.8": ["process.temperature=0.8"], "T0.6": ["process.temperature=0.6"]},
 }
+FLOW = {"image_flow_grpo", "video_flow_grpo"}  # the groups with time_scale teachers
 DROP = {"colour_err"}
 
 HEADER = """# Few-step distillation on the toy tasks
@@ -56,12 +69,94 @@ sampler, time shift or temperature). Students should be judged against the best 
 """  # kept in the JSON, left out of the doc tables for width
 
 
+def teacher_dir(teacher: str, suffix: str, dry_run: bool = False) -> Path | None:
+    cands = [f"runs/{teacher}{suffix}", f"runs/{teacher.rsplit('_', 1)[0]}{suffix}"] if suffix else [f"runs/{teacher}"]
+    found = next((Path(c) for c in cands if (Path(c) / "sft/final").exists()), None)
+    return found or (Path(cands[-1]) if dry_run and teacher in FLOW else None)
+
+
+def run_dir(name: str, suffix: str, seed: int, reuse_seed0: bool) -> Path:
+    legacy = Path(f"runs/distill/{name}{suffix}")
+    if seed == 0 and reuse_seed0 and (legacy / "distill/final/model.pt").exists():
+        return legacy
+    return Path(f"runs/distill/{name}{suffix}_s{seed}")
+
+
+def train(name: str, teacher_ckpt: str, seed: int, out: Path, extra: list[str]) -> str:
+    final = out / "distill/final"
+    if not (final / "model.pt").exists():
+        from omnidiff.core.config import load_config
+        from omnidiff.distill.trainer import DistillTrainer
+
+        cfg = load_config(f"configs/distill/{name}.yaml",
+                          [f"teacher={teacher_ckpt}", f"seed={seed}", f"output_dir={out}", "device=cpu"] + extra)
+        DistillTrainer(cfg).train()
+    return str(final)
+
+
+def main_seeds(args):
+    suffix = args.teacher_suffix
+    plan, sections = [], []
+    for teacher, students in GROUPS.items():
+        tdir = teacher_dir(teacher, suffix, args.dry_run)
+        if tdir is None:
+            print(f"skip {teacher}: no teacher found for suffix {suffix!r}")
+            continue
+        for name in students:
+            for s in args.seeds:
+                out = run_dir(name, suffix, s, not args.no_reuse_seed0)
+                state = "done" if (out / "distill/final/model.pt").exists() else "train"
+                plan.append((teacher, tdir, name, s, out, state))
+    for teacher, tdir, name, s, out, state in plan:
+        print(f"{state:5s} {name} seed={s} teacher={tdir}/sft/final -> {out}")
+    print(f"{sum(p[-1] == 'train' for p in plan)} to train, {sum(p[-1] == 'done' for p in plan)} done")
+    if args.dry_run:
+        return
+    from omnidiff.core.registry import discover_plugins
+
+    discover_plugins()
+    for teacher, students in GROUPS.items():
+        tdir = teacher_dir(teacher, suffix)
+        if tdir is None:
+            continue
+        ckpts = {f"{name}@s{s}": train(name, f"{tdir}/sft/final", s, run_dir(name, suffix, s, not args.no_reuse_seed0),
+                                          args.set)
+                 for name in students for s in args.seeds}
+        rows = run_scorecard(f"{tdir}/sft/final", ckpts, args.nfe, args.n, variants=VARIANTS.get(teacher))
+        save(rows, f"runs/scorecards/{teacher}{suffix}_seeds")
+        for r in rows:
+            if "@s" in r["model"]:
+                r["model"], seed = r["model"].rsplit("@s", 1)
+                r["seed"] = int(seed)
+        agg = aggregate([{k: v for k, v in r.items() if k not in DROP} for r in rows])
+        sections.append(f"### Teacher `{tdir.name}`\n\n{agg_markdown(agg)}\n")
+        print(sections[-1], flush=True)
+    out = args.out or f"docs/results/distillation_toy_seeds{suffix}.md"
+    Path(out).write_text(HEADER.format(n=args.n, nfe=", ".join(map(str, args.nfe))) + SEED_NOTE.format(
+        seeds=", ".join(map(str, args.seeds))) + "\n".join(sections))
+    print(f"wrote {out}")
+
+
+SEED_NOTE = """Seeds: {seeds}. Students are retrained per seed against a fixed teacher; cells are mean ± std over seeds
+(population std). `reference` rows are deterministic, so they have no std.
+
+"""
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("-n", type=int, default=512)
     ap.add_argument("--nfe", type=int, nargs="+", default=[1, 2, 4, 8])
-    ap.add_argument("--out", default="docs/results/distillation_toy.md")
+    ap.add_argument("--out", default=None)
+    ap.add_argument("--seeds", type=int, nargs="+", default=None, help="train and aggregate over these seeds")
+    ap.add_argument("--teacher-suffix", default="", help="e.g. _ts10: use teachers trained with model.time_scale: 10")
+    ap.add_argument("--no-reuse-seed0", action="store_true", help="retrain seed 0 instead of reusing runs/distill/<name>")
+    ap.add_argument("--set", nargs="*", default=[], help="extra config overrides for every student (smoke tests)")
+    ap.add_argument("--dry-run", action="store_true", help="print the planned runs and exit")
     args = ap.parse_args()
+    if args.seeds:
+        return main_seeds(args)
+    args.out = args.out or "docs/results/distillation_toy.md"
     sections = []
     for teacher, students in GROUPS.items():
         ckpts = {s: f"runs/distill/{s}/distill/final" for s in students if Path(f"runs/distill/{s}/distill/final").exists()}
