@@ -1,0 +1,7 @@
+step=50 time=14.82 fake_denoise=0.1625 fake_grad_norm=0.9898 fake_loss=0.1625 dm_loss=0.2281 dm_grad=0.4385 reward=0.039 reward_grad_ratio=0.2009 student_grad_norm=0.6591 student_loss=0.2242
+step=100 time=29.93 fake_denoise=0.1052 fake_grad_norm=0.727 fake_loss=0.1052 dm_loss=0.2141 dm_grad=0.4355 reward=0.03241 reward_grad_ratio=0.177 student_grad_norm=0.5675 student_loss=0.2109
+step=150 time=44.71 fake_denoise=0.08459 fake_grad_norm=0.6411 fake_loss=0.08459 dm_loss=0.2539 dm_grad=0.4762 reward=0.0292 reward_grad_ratio=0.1559 student_grad_norm=0.5346 student_loss=0.251
+step=200 time=59.69 fake_denoise=0.07054 fake_grad_norm=0.6234 fake_loss=0.07054 dm_loss=0.2276 dm_grad=0.4697 reward=0.02829 reward_grad_ratio=0.1518 student_grad_norm=0.594 student_loss=0.2247
+step=250 time=74.55 fake_denoise=0.06448 fake_grad_norm=0.569 fake_loss=0.06448 dm_loss=0.2352 dm_grad=0.4728 reward=0.03244 reward_grad_ratio=0.1446 student_grad_norm=0.5595 student_loss=0.2319
+step=300 time=89.61 fake_denoise=0.05793 fake_grad_norm=0.5617 fake_loss=0.05793 dm_loss=0.2276 dm_grad=0.4619 reward=0.03512 reward_grad_ratio=0.1479 student_grad_norm=0.6611 student_loss=0.2241 eval_diversity=0.1666 eval_fd=0.1542 eval_precision=0.9219 eval_recall=0.9531 eval_class_acc=0.9609 eval_colour_err=0.004308 eval_shape_err=0.03267 eval_center_tv=0.1387
+saved /private/tmp/claude-501/-Users-aggar/56ec9988-ad6a-4699-ae91-0c06e3e567bc/scratchpad/sweep2/w0.1/distill/final

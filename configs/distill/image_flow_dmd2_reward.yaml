@@ -9,6 +9,7 @@ distill:
     type: dmd2_reward
     fake_updates: 5
     gan_weight: 0.0
+    last_stage_prob: 0.5
     mode: gradient
     reward_weight: 1.0
     reward: {type: channel_dominance, channel: 0}

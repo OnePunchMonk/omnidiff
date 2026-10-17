@@ -101,3 +101,27 @@ def test_torch_reward_matches_numpy(spec):
     if spec["type"] != "temporal_smoothness":
         x = x[:, :, 0]
     np.testing.assert_allclose(rw.torch_call(torch.as_tensor(x)).numpy(), rw(x, [""] * 5), rtol=1e-5, atol=1e-6)
+
+
+def test_decode_tensor_matches_decode(teacher, tmp_path):
+    tr = _trainer(teacher, tmp_path)
+    x = 1.5 * torch.randn(3, *tr.shape)
+    np.testing.assert_allclose(tr.c.codec.decode_tensor(x).numpy(), tr.c.codec.decode(x))
+
+
+@pytest.mark.parametrize("mode", ["gradient", "advantage"])
+def test_zero_reward_weight_student_loss_equals_dmd2(mode, teacher, tmp_path):
+    """At the loss("student") level: same prompts, same rng consumption, same loss."""
+    import copy
+
+    from omnidiff.distill.methods.dmd2 import DMD2
+    tr = _trainer(teacher, tmp_path, f"distill.method.mode={mode}", "distill.method.reward_weight=0")
+    m = tr.method
+    rng, gen = copy.deepcopy(tr.rng), tr.gen.get_state()
+    torch.manual_seed(1)
+    a, _ = m.loss("student", tr)
+    tr.rng = rng
+    tr.gen.set_state(gen)
+    torch.manual_seed(1)
+    b, _ = DMD2.loss(m, "student", tr)
+    assert torch.equal(a, b)

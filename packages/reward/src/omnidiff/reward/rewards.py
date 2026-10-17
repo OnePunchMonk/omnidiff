@@ -17,7 +17,7 @@ import torch
 from omnidiff.core.registry import REWARDS
 
 
-def _per_sample_mean(x):
+def _per_sample_mean(x: np.ndarray | torch.Tensor) -> np.ndarray | torch.Tensor:
     return x.reshape(x.shape[0], -1).mean(1)
 
 
