@@ -18,7 +18,7 @@ sampling: {num_steps: 10, guidance_scale: 1.0}
 
 sft:
   dataset: {type: moving_blob, num_classes: 4}
-  steps: 2000
+  steps: 8000              # at 2000 the model ignores the direction label (oracle direction_acc ~ chance)
   batch_size: 32
   lr: 3e-4
 

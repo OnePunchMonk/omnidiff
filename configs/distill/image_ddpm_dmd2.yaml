@@ -1,4 +1,6 @@
-# DMD2 on the Gaussian (VP, epsilon) teacher.
+# DMD2 on the Gaussian (VP, epsilon) teacher. With epsilon prediction, x0 = (x - sigma eps) / alpha
+# amplifies errors ~150x at t = 1 (alpha(1) ~ 0.0066), and DMD2 diverges without clipping the
+# student's x0 to the data range.
 seed: 0
 device: auto
 output_dir: runs/distill/image_ddpm_dmd2
@@ -6,6 +8,7 @@ teacher: runs/image_ddpm_ddpo/sft/final     # produced by: omnidiff sft -c confi
 
 distill:
   method: {type: dmd2, fake_updates: 5, tau_max: 0.9}
+  student_process: {clip_x0: 1.0}
   student_steps: 4
   data: teacher
   steps: 600

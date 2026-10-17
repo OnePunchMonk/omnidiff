@@ -39,6 +39,7 @@ class DistillConfig:
     student_steps: int | None = None          # uniform student grid (process default spacing) ...
     student_timesteps: list[float] | None = None  # ... or an explicit one
     sampler: str | None = None                # student sampler; default comes from the method
+    student_process: dict | None = None       # process settings for the student only, e.g. {clip_x0: 1.0}; exported
     teacher_guidance: float = 1.0             # CFG used for every teacher prediction (distilled into the student)
     data: dict | str = "teacher"              # "teacher": a pool of teacher ODE samples; or a dataset spec
     pool_size: int = 2048
@@ -162,6 +163,10 @@ class DistillTrainer:
         self.teacher_process = self._with_sampler("ode" if self.continuous else "ancestral")
         self.student_sampler = self.dc.sampler or (self.method.sampler if self.continuous else "ancestral")
         self.student_process = self._with_sampler(self.student_sampler)
+        for k, v in (self.dc.student_process or {}).items():
+            if not hasattr(self.student_process, k):
+                raise KeyError(f"student_process: {type(self.process).__name__} has no setting {k!r}")
+            setattr(self.student_process, k, v)
         self.grid = self._student_grid()
 
         student_spec = {**self.teacher_cfg["model"], "two_time": self.method.two_time}
@@ -294,6 +299,7 @@ class DistillTrainer:
         if isinstance(cfg["process"], str):
             cfg["process"] = {"type": cfg["process"]}
         cfg["process"]["sampler"] = self.student_sampler
+        cfg["process"].update(self.dc.student_process or {})
         grid = [round(float(t), 6) for t in self.grid]
         cfg["sampling"] = {"num_steps": len(grid) - 1, "guidance_scale": 1.0, "timesteps": grid}
         cfg["distilled_from"] = {"teacher": str(self.cfg["teacher"]), "method": self.dc.method,

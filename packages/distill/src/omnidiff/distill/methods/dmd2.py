@@ -64,7 +64,7 @@ class DMD2(Distiller):
         x = tr.student_rollout(cond, k, n)
         t = tr.grid[k]
         # s = 0 asks a two-time (flow-map) student for the jump straight to data; one-time models ignore it
-        return tr.process.to_x0(tr.student_pred(x, t, cond, s=torch.zeros(())), x, t), cond
+        return tr.student_process.to_x0(tr.student_pred(x, t, cond, s=torch.zeros(())), x, t), cond
 
     def _noisy(self, tr, x0):
         tau = torch.rand(x0.shape[0], device=x0.device) * (self.tau_max - self.tau_min) + self.tau_min
