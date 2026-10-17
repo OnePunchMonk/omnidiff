@@ -46,6 +46,8 @@ class DMD2(Distiller):
                  last_stage_prob: float | None = None):
         self.fake_updates, self.tau_min, self.tau_max = fake_updates, tau_min, tau_max
         self.gan_weight, self.backward_sim, self.fake_lr = gan_weight, backward_sim, fake_lr
+        if last_stage_prob is not None and not 0.0 <= last_stage_prob <= 1.0:  # also rejects nan
+            raise ValueError(f"last_stage_prob must be None or in [0, 1], got {last_stage_prob}")
         self.last_stage_prob = last_stage_prob
 
     def setup(self, tr):
@@ -60,7 +62,8 @@ class DMD2(Distiller):
         return ["fake"] * self.fake_updates + ["student"]
 
     def _stage(self, tr) -> int:
-        """Grid index the generator starts from: uniform, or the last stage with ``last_stage_prob``.
+        """Grid index the generator starts from: uniform, or the last stage with ``last_stage_prob``
+        (so the last stage's overall probability is p + (1 - p) / K for K stages).
 
         The DM gradient matches the *mixture* of the stages' outputs to the data, while inference
         returns only the last stage's, so uniform stages let the last one drift (see docs/notes/D1.md).
