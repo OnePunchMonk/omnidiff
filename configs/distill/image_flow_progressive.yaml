@@ -1,0 +1,13 @@
+# Progressive distillation (Salimans & Ho): 16 -> 8 -> 4 -> 2 steps, each round halves the grid. The exported student is the 2-step one.
+seed: 0
+device: auto
+output_dir: runs/distill/image_flow_progressive
+teacher: runs/image_flow_grpo/sft/final     # produced by: omnidiff sft -c configs/image_flow_grpo.yaml
+
+distill:
+  method: {type: progressive, start_steps: 16, rounds: 3}
+  data: teacher
+  steps: 2400
+  batch_size: 64
+  lr: 1e-4
+  eval_every: 600

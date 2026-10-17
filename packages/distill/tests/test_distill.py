@@ -203,3 +203,37 @@ def test_coupled_kd_student_starts_as_the_coupled_teacher(noise, teachers, tmp_p
     proc.coupled_gumbel = 1.0
     out = sample(tr.student, proc, b.x0.shape, cond=b.cond, timesteps=tr.grid)
     torch.testing.assert_close(out, b.x0)
+
+
+@pytest.mark.parametrize("name", ["image_flow_progressive", "image_ddpm_progressive"])
+def test_progressive_target_is_two_teacher_steps(name, teachers, tmp_path):
+    tr = _trainer(teachers, tmp_path, name)
+    m, p = tr.method, tr.process
+    x_t, cond = torch.randn(3, *tr.shape), tr.prompt_cond(3)
+    for t, mid, s in [(0.75, 0.625, 0.5), (0.25, 0.125, 0.0)]:  # the second lands on the data
+        t, mid, s = torch.tensor(t), torch.tensor(mid), torch.tensor(s)
+        x_s = m.two_teacher_steps(tr, x_t, t, mid, s, cond)
+        pred = m.target_pred(p, x_t, x_s, t, s)
+        torch.testing.assert_close(p.ode_step(pred, x_t, t, s), x_s, atol=1e-4, rtol=1e-4)
+
+
+def test_progressive_rounds_advance_and_halve_the_grid(teachers, tmp_path):
+    tr = _trainer(teachers, tmp_path, "image_flow_progressive", "distill.steps=3")
+    m = tr.method
+    assert [len(m.grid(tr, r)) - 1 for r in range(3)] == [8, 4, 2]
+    assert torch.equal(tr.grid, m.grid(tr, 2))  # the exported grid is the last round's
+    assert m.round_teacher is None  # round 0 distils the real teacher
+    for p, q in zip(tr.student.parameters(), tr.teacher.parameters()):  # the student starts as the teacher
+        torch.testing.assert_close(p, q)
+    with torch.no_grad():
+        for p in tr.student.parameters():
+            p.add_(0.01)
+    tr.roles["student"].ema.update(tr.student)
+    m.schedule(1, tr)  # round_len = 1: step 1 starts round 1 and snapshots the EMA student
+    assert m.round == 1
+    with tr.roles["student"].ema.swapped_in(tr.student):
+        expected = {k: v.clone() for k, v in tr.student.state_dict().items()}
+    for k, v in m.round_teacher.state_dict().items():
+        torch.testing.assert_close(v, expected[k])
+    loss, metrics = m.loss("student", tr)
+    assert metrics["student_steps"] == 4 and torch.isfinite(loss)
