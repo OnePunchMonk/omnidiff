@@ -142,6 +142,13 @@ Models of 1B+ parameters, FSDP, sparse attention, causal/streaming students (Sel
 | D | one real small model per modality (candidates: MDLM-OWT-class dLLM, ImageNet-64 EDM/EDM2) | reproduce one published number within noise before claiming anything new | **GPU: estimate and ask first** |
 | E | G4 export to the diffusers/SGLang format, and an upstream issue or PR | a student checkpoint served by SGLang Diffusion with its sampler spec | small |
 
+### Reading notes: 2609.33947 (abstract only)
+
+- Much of the few-step quality gap in masked DLMs is a sampler artifact. "Modest sampler sharpening", meaning temperature below 1 with no retraining, makes an old MDLM-class model rival newer ones. At 16 steps it beats the default sampler at 1024 steps on generative perplexity.
+- Temperature 1 is generically suboptimal under parallel unmasking, because tokens decoded together lose their dependencies.
+- Per-output metrics can be gamed by a generator with two outputs, so quality and across-output diversity must be scored jointly. The paper calls this GroupEval.
+- What this means here: every text distillation result is compared with a temperature-tuned teacher at the same step count, and reported with coverage and diversity next to validity. The scorecard does this through `variants`.
+
 ## 6. Risks
 
 - **Crowding.** FastGen could add discrete or RL support. Mitigation: check its issues and roadmap before Phase C, and keep the differentiator (text, RL, scorecard) at the centre.
@@ -167,7 +174,8 @@ Models of 1B+ parameters, FSDP, sparse attention, causal/streaming students (Sel
 | scorecard: FD / precision / recall vs teacher and data, diversity, oracles, reward, latency | done | `omnidiff.reward.scorecard`, dataset `oracle()` |
 | RL on few-step students | works end to end, experiments running | `test_renoise_student_is_rl_tunable` |
 | toy results | see [docs/results/distillation_toy.md](../results/distillation_toy.md) | |
-| discrete consistency (DCD / multi-mask) | not started; read 2609.33947 and 2607.19686 first | |
+| tuned-baseline rows in the scorecard (teacher + sampler/temperature overrides) | done | `run_scorecard(variants=...)`, `--ref-variant` |
+| discrete consistency (DCD / multi-mask) | not started; read 2607.19686 first | |
 | rCM (flow map with `s_mode: zero` + DMD regulariser) | not started; needs composable objectives | |
 | progressive distillation rounds for continuous processes | not started | |
 

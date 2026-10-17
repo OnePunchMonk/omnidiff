@@ -16,10 +16,17 @@ from omnidiff.reward.scorecard import run_scorecard, save, to_markdown
 
 GROUPS = {
     "image_flow_grpo": ["image_flow_kd", "image_flow_consistency", "image_flow_flow_map", "image_flow_dmd2",
-                        "image_flow_dmd2_gan"],
+                        "image_flow_dmd2_gan", "image_flow_rcm"],
     "image_ddpm_ddpo": ["image_ddpm_dmd2"],
     "video_flow_grpo": ["video_flow_dmd2", "video_flow_flow_map"],
     "text_masked_grpo": ["text_masked_kd", "text_masked_sdtt"],
+}
+# Tuned baselines: the teacher with a sharper or different sampler, at the same step counts.
+VARIANTS = {
+    "image_flow_grpo": {"renoise": ["process.sampler=renoise"], "shift3": ["process.shift=3.0"]},
+    "image_ddpm_ddpo": {"renoise": ["process.sampler=renoise"]},
+    "video_flow_grpo": {"renoise": ["process.sampler=renoise"], "shift3": ["process.shift=3.0"]},
+    "text_masked_grpo": {"T0.8": ["process.temperature=0.8"], "T0.6": ["process.temperature=0.6"]},
 }
 DROP = {"colour_err"}  # kept in the JSON, left out of the doc tables for width
 
@@ -33,7 +40,7 @@ def main():
     sections = []
     for teacher, students in GROUPS.items():
         ckpts = {s: f"runs/distill/{s}/distill/final" for s in students if Path(f"runs/distill/{s}/distill/final").exists()}
-        rows = run_scorecard(f"runs/{teacher}/sft/final", ckpts, args.nfe, args.n)
+        rows = run_scorecard(f"runs/{teacher}/sft/final", ckpts, args.nfe, args.n, variants=VARIANTS.get(teacher))
         save(rows, f"runs/scorecards/{teacher}")
         rows = [{k: v for k, v in r.items() if k not in DROP} for r in rows]
         sections.append(f"### Teacher `{teacher}`\n\n{to_markdown(rows)}\n")

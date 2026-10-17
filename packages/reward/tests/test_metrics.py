@@ -39,8 +39,10 @@ def test_within_prompt_diversity():
 
 def test_scorecard_runs_on_a_tiny_teacher(tmp_path):
     ckpt = SFTTrainer(tiny_config(ROOT / "configs" / "image_flow_grpo.yaml", tmp_path)).train()
-    rows = run_scorecard(str(ckpt), {"same": str(ckpt)}, nfes=(1, 2), n=16, ref_steps=4)
-    assert [(r["model"], r["nfe"]) for r in rows] == [("reference@4", 4), ("reference", 1), ("reference", 2),
-                                                      ("same", 1), ("same", 2)]
+    rows = run_scorecard(str(ckpt), {"same": str(ckpt)}, nfes=(1, 2), n=16, ref_steps=4,
+                         variants={"shift3": ["process.shift=3.0"]})
+    assert [(r["model"], r["nfe"]) for r in rows] == [
+        ("reference@4", 4), ("reference", 1), ("reference", 2), ("reference[shift3]", 1), ("reference[shift3]", 2),
+        ("same", 1), ("same", 2)]
     assert {"fd", "precision", "recall", "data_fd", "class_acc", "reward"} <= set(rows[1])
     assert "| model |" in to_markdown(rows)

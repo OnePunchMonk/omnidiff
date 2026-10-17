@@ -5,7 +5,11 @@ Every row is scored three ways:
   * against real data, when the reference config names a dataset: data_fd / data_precision / data_recall
   * by the dataset's exact oracle and the reward, when available
 The reference itself is also evaluated at each step count with its deterministic
-sampler, which is the baseline a few-step student has to beat.
+sampler. ``variants`` add tuned versions of that baseline (the same weights with
+config overrides, e.g. ``process.temperature=0.7`` for masked text, or another
+sampler or time shift for continuous models). Few-step gaps are often a sampler-tuning
+artifact (arXiv 2609.33947), so a student should be compared with the best
+tuned teacher row, not the default one.
 """
 
 from __future__ import annotations
@@ -32,7 +36,7 @@ def _trained_grid(pipe: Pipeline, nfe: int):
 
 def run_scorecard(reference: str, checkpoints: dict[str, str] | None = None, nfes=(1, 2, 4, 8), n: int = 256,
                   ref_steps: int = 32, seed: int = 0, device: str = "cpu", reference_sampler: str | None = "auto",
-                  reward: dict | str | None = "auto") -> list[dict]:
+                  reward: dict | str | None = "auto", variants: dict[str, list[str]] | None = None) -> list[dict]:
     discover_plugins()
     ref_pipe = Pipeline.from_checkpoint(reference, device)
     cfg = ref_pipe.c.cfg
@@ -68,7 +72,11 @@ def run_scorecard(reference: str, checkpoints: dict[str, str] | None = None, nfe
         return row
 
     rows = [score(f"reference@{ref_steps}", ref_steps, ref_pipe, ref_samples, float("nan"))]
-    entries = [("reference", ref_pipe)] + [(k, Pipeline.from_checkpoint(v, device)) for k, v in (checkpoints or {}).items()]
+    base = [f"process.sampler={reference_sampler}"] if reference_sampler else []
+    entries = [("reference", ref_pipe)]
+    entries += [(f"reference[{k}]", Pipeline.from_checkpoint(reference, device, base + list(v)))
+                for k, v in (variants or {}).items()]
+    entries += [(k, Pipeline.from_checkpoint(v, device)) for k, v in (checkpoints or {}).items()]
     for name, pipe in entries:
         for nfe in nfes:
             grid = _trained_grid(pipe, nfe)
