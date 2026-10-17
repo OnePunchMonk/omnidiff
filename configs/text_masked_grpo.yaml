@@ -1,0 +1,36 @@
+# Byte-level masked diffusion LM (MDLM-style) on a toy corpus, then GRPO on
+# prompt completions. Prompts are pre-filled positions; the reward is the
+# fraction of vowels in the completion.
+seed: 0
+device: auto
+output_dir: runs/text_masked_grpo
+sample_shape: [32]              # sequence length
+
+codec: text                     # byte tokenizer; provides mask_id and vocab_size
+process: {type: masked, reduction: sum}
+model:
+  dim: 128
+  adapter: tokens
+  backbone: {type: dit, depth: 4, heads: 4}
+prompts:
+  type: text
+  prompts: ["the cat", "a dog", "my friend", "the sun", "the bird", "a fish"]
+sampling: {num_steps: 16}
+
+sft:
+  dataset: text_lines           # built-in toy corpus; or {type: text_lines, path: data.txt}
+  steps: 3000
+  batch_size: 64
+  lr: 3e-4
+
+rl:
+  init_from: runs/text_masked_grpo/sft/final
+  algorithm: {type: grpo, clip_range: 0.2, kl_coef: 0.0}
+  reward: {type: char_fraction, chars: "aeiou"}
+  epochs: 40
+  prompts_per_epoch: 6
+  group_size: 8
+  rollout_batch_size: 48
+  train_batch_size: 24
+  timestep_fraction: 0.5
+  lr: 5e-5

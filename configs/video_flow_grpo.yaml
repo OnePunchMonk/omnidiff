@@ -1,0 +1,40 @@
+# Direction-conditioned video flow matching on a moving blob (joint
+# spatio-temporal attention), then Flow-GRPO with a composite reward and a KL
+# leash to the frozen base (the LoRA-disabled model).
+seed: 0
+device: auto
+output_dir: runs/video_flow_grpo
+sample_shape: [3, 4, 16, 16]   # C, T, H, W
+
+codec: pixel
+process: {type: flow, noise_level: 0.7}
+model:
+  dim: 128
+  adapter: {type: video_patch, patch: 4, temporal_patch: 1}
+  backbone: {type: dit, depth: 4, heads: 4}
+  conditioner: {type: class, num_classes: 4}
+prompts: {type: class, num_classes: 4}
+sampling: {num_steps: 10, guidance_scale: 1.0}
+
+sft:
+  dataset: {type: moving_blob, num_classes: 4}
+  steps: 2000
+  batch_size: 32
+  lr: 3e-4
+
+rl:
+  init_from: runs/video_flow_grpo/sft/final
+  algorithm: {type: grpo, clip_range: 1e-4, kl_coef: 0.01}
+  reward:
+    type: composite
+    terms:
+      - {weight: 1.0, reward: {type: brightness}}
+      - {weight: 1.0, reward: {type: temporal_smoothness}}
+  lora: {rank: 8, alpha: 16}
+  epochs: 40
+  prompts_per_epoch: 8
+  group_size: 4
+  rollout_batch_size: 32
+  train_batch_size: 16
+  timestep_fraction: 0.6
+  lr: 3e-4

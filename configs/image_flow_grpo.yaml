@@ -1,0 +1,39 @@
+# Class-conditional image flow matching on synthetic colour blobs, then
+# Flow-GRPO with LoRA towards "redder" images.
+#   omnidiff sft -c configs/image_flow_grpo.yaml
+#   omnidiff rl  -c configs/image_flow_grpo.yaml
+#   omnidiff sample --ckpt runs/image_flow_grpo/rl/final --prompt 1 --prompt 2
+seed: 0
+device: auto
+output_dir: runs/image_flow_grpo
+sample_shape: [3, 16, 16]
+
+codec: pixel
+process: {type: flow, noise_level: 0.7, shift: 1.0}
+model:
+  dim: 128
+  adapter: {type: image_patch, patch: 2}
+  backbone: {type: dit, depth: 4, heads: 4}
+  conditioner: {type: class, num_classes: 4}
+prompts: {type: class, num_classes: 4}
+sampling: {num_steps: 10, guidance_scale: 1.0}
+
+sft:
+  dataset: {type: blobs, num_classes: 4}
+  steps: 2000
+  batch_size: 64
+  lr: 3e-4
+  cond_dropout: 0.1
+
+rl:
+  init_from: runs/image_flow_grpo/sft/final
+  algorithm: {type: grpo, clip_range: 1e-4, kl_coef: 0.0}
+  reward: {type: channel_dominance, channel: 0}
+  lora: {rank: 8, alpha: 16}
+  epochs: 40
+  prompts_per_epoch: 8
+  group_size: 8
+  rollout_batch_size: 64
+  train_batch_size: 32
+  timestep_fraction: 0.6
+  lr: 3e-4

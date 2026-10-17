@@ -1,0 +1,77 @@
+from __future__ import annotations
+
+import torch
+import torch.nn.functional as F
+
+from ..registry import PROCESSES
+from .base import DiffusionProcess, Transition, reduce
+
+
+@PROCESSES.register("masked")
+class MaskedDiffusion(DiffusionProcess):
+    """Absorbing-state discrete diffusion (MDLM / LLaDA style), linear schedule.
+
+    Each free token is masked with probability t. The model predicts logits over
+    the clean token at every position. A reverse step from t to s unmasks each
+    masked token with probability (t - s) / t and draws it from the prediction;
+    decoded tokens are carried over unchanged. So the step's log-prob is exact:
+
+        log pi = sum_{unmasked now}  [log((t - s) / t) + log p(token)]
+               + sum_{still masked}  log(s / t)
+
+    Prompts and infilling constraints are pre-filled positions: ``cond["prefix"]``
+    is (B, L) with a token id where the position is fixed and -1 where it is free.
+    """
+
+    def __init__(self, mask_id: int, temperature: float = 1.0, reduction: str = "sum", t_min: float = 1e-3):
+        self.mask_id, self.temperature, self.reduction, self.t_min = mask_id, temperature, reduction, t_min
+
+    def timesteps(self, num_steps, device):
+        return torch.linspace(1.0, 0.0, num_steps + 1, device=device)
+
+    def prior(self, shape, cond, device, generator=None):
+        x = torch.full(shape, self.mask_id, dtype=torch.long, device=device)
+        prefix = (cond or {}).get("prefix")
+        if prefix is not None:
+            x = torch.where(prefix >= 0, prefix.to(device), x)
+        return x
+
+    def training_loss(self, model, x0, cond, drop_cond=None):
+        B, L = x0.shape
+        t = torch.rand(B, device=x0.device) * (1 - self.t_min) + self.t_min
+        maskable = (cond or {}).get("loss_mask")
+        maskable = torch.ones_like(x0, dtype=torch.bool) if maskable is None else maskable.bool()
+        masked = (torch.rand(B, L, device=x0.device) < t[:, None]) & maskable
+        logits = model(torch.where(masked, self.mask_id, x0), t, cond, drop_cond)
+        nll = F.cross_entropy(logits.float().transpose(1, 2), x0, reduction="none")
+        # MDLM's ELBO weight for the linear schedule is 1 / t.
+        return (nll * masked / t[:, None]).sum() / maskable.sum().clamp(min=1)
+
+    def _log_probs(self, logits):
+        logits = logits.float() / self.temperature
+        logits = logits.index_fill(-1, torch.tensor([self.mask_id], device=logits.device), float("-inf"))
+        return logits.log_softmax(-1)
+
+    def transition(self, pred, x_t, t, t_next, x_next=None, generator=None):
+        logp = self._log_probs(pred)
+        is_masked = x_t == self.mask_id
+        p = ((t - t_next) / t).clamp(0, 1)
+        if x_next is None:
+            u = torch.rand(x_t.shape, device=x_t.device, generator=generator)
+            draws = torch.multinomial(logp.exp().flatten(0, -2), 1, generator=generator).view_as(x_t)
+            x_next = torch.where(is_masked & (u < p), draws, x_t)
+        unmasked = is_masked & (x_next != self.mask_id)
+        stayed = is_masked & ~unmasked
+        tok_logp = logp.gather(-1, torch.where(unmasked, x_next, 0).unsqueeze(-1)).squeeze(-1)
+        per_tok = torch.where(unmasked, tok_logp + p.clamp(min=1e-12).log(), torch.zeros_like(tok_logp))
+        per_tok = per_tok + stayed * (1 - p).clamp(min=1e-12).log()
+        stats = {"logp": logp, "is_masked": is_masked, "p": p}
+        return Transition(x_next, reduce(per_tok, self.reduction), stats)
+
+    def kl(self, new, ref):
+        # Both policies share the unmask probability, so the step KL is the categorical
+        # KL at each masked position weighted by that probability.
+        lp, lq = new.stats["logp"], ref.stats["logp"]
+        diff = (lp - lq).masked_fill(~lp.isfinite(), 0.0)
+        per_pos = (lp.exp() * diff).sum(-1) * new.stats["is_masked"] * new.stats["p"]
+        return reduce(per_pos, self.reduction)
