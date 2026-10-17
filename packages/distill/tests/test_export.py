@@ -1,4 +1,5 @@
 import json
+import shutil
 from pathlib import Path
 
 import numpy as np
@@ -6,7 +7,7 @@ import pytest
 import torch
 
 from omnidiff.core import Pipeline
-from omnidiff.core.config import load_config
+from omnidiff.core.config import load_config, save_config
 from omnidiff.core.testing import tiny_config
 from omnidiff.distill import DistillTrainer
 from omnidiff.distill.export import SAMPLER_REQUIRED, export_bundle, load_bundle
@@ -69,10 +70,92 @@ def test_bundle_round_trip_is_bit_identical(name, safetensors, teachers, tmp_pat
         assert np.array_equal(a.samples, b.samples)
 
 
-def test_cli_export(teachers, tmp_path):
+def _student(teachers, tmp_path, name="image_flow_kd"):
+    cfg = distill_config(ROOT / "configs" / "distill" / f"{name}.yaml", teachers, tmp_path)
+    return DistillTrainer(cfg).train()
+
+
+def test_cli_export_loads_and_matches(teachers, tmp_path):
     from omnidiff.core.cli import main
 
-    cfg = distill_config(ROOT / "configs" / "distill" / "image_flow_kd.yaml", teachers, tmp_path)
-    ckpt = DistillTrainer(cfg).train()
+    ckpt = _student(teachers, tmp_path)
     main(["export", "--ckpt", str(ckpt), "--out", str(tmp_path / "b")])
-    assert (tmp_path / "b" / "sampler.json").exists()
+    a = Pipeline.from_checkpoint(ckpt, device="cpu").generate(n=2, seed=1)
+    b = load_bundle(tmp_path / "b", device="cpu").generate(n=2, seed=1)
+    assert torch.equal(a.raw, b.raw)
+
+
+def test_plain_sft_checkpoint_round_trips(teachers, tmp_path):
+    ckpt = teachers("image_flow_grpo")
+    bundle = export_bundle(ckpt, tmp_path / "sft")
+    assert "distilled_from" not in json.loads((bundle / "sampler.json").read_text())
+    a = Pipeline.from_checkpoint(ckpt, device="cpu").generate(n=2, seed=3)
+    assert torch.equal(a.raw, load_bundle(bundle, device="cpu").generate(n=2, seed=3).raw)
+
+
+def test_provenance_has_no_absolute_teacher_path(teachers, tmp_path):
+    bundle = export_bundle(_student(teachers, tmp_path), tmp_path / "b")
+    teacher = json.loads((bundle / "sampler.json").read_text())["distilled_from"]["teacher"]
+    assert not Path(teacher).is_absolute()
+
+
+def test_re_export_does_not_load_stale_weights(teachers, tmp_path, monkeypatch):
+    pytest.importorskip("safetensors")
+    a, b = teachers("image_flow_grpo"), _student(teachers, tmp_path)
+    out = tmp_path / "bundle"
+    export_bundle(a, out)
+    monkeypatch.setattr("omnidiff.distill.export._safetensors", lambda: None)
+    export_bundle(b, out)
+    monkeypatch.undo()
+    assert not (out / "model.safetensors").exists()
+    ref = Pipeline.from_checkpoint(b, device="cpu").generate(n=2, seed=0)
+    assert torch.equal(ref.raw, load_bundle(out, device="cpu").generate(n=2, seed=0).raw)
+
+
+def test_tampered_weights_are_rejected(teachers, tmp_path):
+    bundle = export_bundle(teachers("image_flow_grpo"), tmp_path / "b")
+    meta = json.loads((bundle / "sampler.json").read_text())
+    with open(bundle / meta["weights"]["file"], "ab") as f:
+        f.write(b"x")
+    with pytest.raises(ValueError, match="sha256"):
+        load_bundle(bundle)
+
+
+def test_relocated_bundle_resolves_resource_paths(teachers, tmp_path):
+    src = tmp_path / "ckpt"
+    shutil.copytree(teachers("text_masked_grpo"), src)
+    prompts = tmp_path / "prompts.txt"
+    prompts.write_text("the cat\na dog\n")
+    cfg = load_config(src / "config.yaml")
+    cfg["prompts"] = {"type": "text", "path": str(prompts)}
+    save_config(cfg, src / "config.yaml")
+    bundle = export_bundle(src, tmp_path / "bundle")
+    ref = Pipeline.from_checkpoint(src, device="cpu").generate(n=2, seed=0)
+    prompts.unlink()
+    moved = shutil.move(str(bundle), str(tmp_path / "elsewhere"))
+    assert load_bundle(moved, device="cpu").generate(n=2, seed=0).samples == ref.samples
+
+
+@pytest.fixture
+def good_meta(teachers, tmp_path):
+    bundle = export_bundle(_student(teachers, tmp_path), tmp_path / "b")
+    return bundle, json.loads((bundle / "sampler.json").read_text())
+
+
+@pytest.mark.parametrize("edit, match", [
+    (lambda m: m.pop("weights"), "missing keys"),
+    (lambda m: m.update(schema_version=2), "schema_version"),
+    (lambda m: m.update(process={"settings": {}}), "process"),
+    (lambda m: m.update(timesteps=[1.0, 0.2, 0.5, 0.0], num_steps=3), "descending"),
+    (lambda m: m.update(timesteps=[0.9, 0.5, 0.0], num_steps=2), "from 1 to 0"),
+    (lambda m: m.update(timesteps=["1", "0"], num_steps=1), "descending"),
+    (lambda m: m.update(num_steps=m["num_steps"] + 1), "num_steps"),
+    (lambda m: m.update(sample_shape=[]), "sample_shape"),
+    (lambda m: m.update(weights={"file": "model.pt"}), "weights"),
+])
+def test_malformed_sampler_json_is_rejected(good_meta, edit, match):
+    bundle, meta = good_meta
+    edit(meta)
+    (bundle / "sampler.json").write_text(json.dumps(meta))
+    with pytest.raises(ValueError, match=match):
+        load_bundle(bundle)
