@@ -32,7 +32,10 @@ class ProgressiveDistillation(Distiller):
         x0*  = (sigma_t x_s* - sigma_s x_t) / (sigma_t a_s - sigma_s a_t).
 
     The loss is taken in x0 space (the paper's choice: an eps-space error is amplified by
-    1 / sigma_t near the data), weighted by max(SNR, 1) (the paper's truncated SNR weight).
+    1 / sigma_t near the data). ``weighting``: ``truncated_snr`` is the paper's max(SNR, 1), which
+    suits flow. For an eps-prediction network an x0 error is (sigma/alpha)^2 times the eps error,
+    ~2e4 at t = 1 for vp_linear, so that weight lets t = 1 dominate; ``snr`` weights by SNR, which
+    makes the loss the plain eps-space MSE.
     ``target_pred`` also returns the network output that realises (x0*, eps*) in the process's
     own parameterisation (eps for gaussian, velocity for flow).
     """
@@ -43,8 +46,8 @@ class ProgressiveDistillation(Distiller):
     def __init__(self, start_steps: int = 16, rounds: int = 3, weighting: str = "truncated_snr"):
         if start_steps % 2**rounds:
             raise ValueError(f"start_steps {start_steps} must be divisible by 2**rounds")
-        if weighting not in ("truncated_snr", "none"):
-            raise ValueError("weighting must be truncated_snr|none")
+        if weighting not in ("truncated_snr", "snr", "none"):
+            raise ValueError("weighting must be truncated_snr|snr|none")
         self.start_steps, self.rounds, self.weighting = start_steps, rounds, weighting
         self.round = 0
 
@@ -116,13 +119,18 @@ class ProgressiveDistillation(Distiller):
         a0, a1 = process.to_x0(zero, x_t, t), process.to_x0(zero + 1, x_t, t)
         return (x0 - a0) / (a1 - a0)
 
+    @staticmethod
+    def sample_triple(tr, student_grid, teacher_grid, n):
+        """Per-sample (t, mid, s): a student interval and the teacher-grid time halfway through it."""
+        k = torch.randint(0, len(student_grid) - 1, (n,), device=tr.device)
+        return student_grid[k], teacher_grid[2 * k + 1], student_grid[k + 1]
+
     def loss(self, role, tr):
         b = tr.data.batch(tr.dc.batch_size)
         p = tr.process
         student_grid = self.grid(tr, self.round)
         teacher_grid = p.timesteps(2 * (len(student_grid) - 1), tr.device)
-        k = torch.randint(0, len(student_grid) - 1, (b.x0.shape[0],), device=tr.device)
-        t, s, mid = student_grid[k], student_grid[k + 1], teacher_grid[2 * k + 1]
+        t, mid, s = self.sample_triple(tr, student_grid, teacher_grid, b.x0.shape[0])
         x_t = p.q_sample(b.x0, t, torch.randn_like(b.x0))
         x_s = self.two_teacher_steps(tr, x_t, t, mid, s, b.cond)
         x0_star, _ = self.x0_eps_target(p, x_t, x_s, t, s)
@@ -131,6 +139,9 @@ class ProgressiveDistillation(Distiller):
             a, sg = p.alpha_sigma(t)
             w = (a**2 / sg**2).clamp(min=1.0)
             err = w / w.mean() * err
+        elif self.weighting == "snr":
+            a, sg = p.alpha_sigma(t)
+            err = a**2 / sg**2 * err
         loss = err.mean()
-        return loss, {"progressive_x0_mse": loss.item(), "round": float(self.round),
+        return loss, {"progressive_loss": loss.item(), "round": float(self.round),
                       "student_steps": float(len(student_grid) - 1)}
