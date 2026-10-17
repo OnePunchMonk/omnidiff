@@ -11,7 +11,7 @@ from dataclasses import dataclass
 import numpy as np
 import torch
 
-from ..registry import ALGORITHMS
+from omnidiff.core.registry import ALGORITHMS
 
 
 def compute_advantages(rewards: np.ndarray, groups: np.ndarray, mode: str = "group", eps: float = 1e-4,

@@ -1,4 +1,5 @@
-"""omnidiff sft|rl|sample|list"""
+"""``omnidiff <command>``. Core ships ``sample`` and ``list``; packages add commands through the
+``omnidiff.commands`` entry-point group, whose targets are ``register(subparsers)`` functions."""
 
 from __future__ import annotations
 
@@ -7,13 +8,8 @@ from pathlib import Path
 
 import numpy as np
 
-from .config import load_config, parse_value
-
-
-def _train(args, trainer_cls):
-    cfg = load_config(args.config, args.overrides)
-    path = trainer_cls(cfg).train()
-    print(f"saved {path}")
+from .config import parse_value
+from .registry import COMMAND_GROUP, entry_points
 
 
 def _sample(args):
@@ -34,23 +30,25 @@ def _sample(args):
 
 
 def _list(args):
-    from .registry import ALL
+    from .registry import ALL, discover_plugins
 
+    discover_plugins()
     for name, reg in ALL.items():
         print(f"{name:14s} {', '.join(reg)}")
 
 
-def main(argv=None):
-    from .rl.trainer import RLTrainer
-    from .sft import SFTTrainer
+def add_config_command(sub, name: str, help: str, fn):
+    """A ``-c config.yaml [key=value ...]`` command, the shape every training command shares."""
+    p = sub.add_parser(name, help=help)
+    p.add_argument("-c", "--config", required=True)
+    p.add_argument("overrides", nargs="*", help="dotted overrides, e.g. rl.lr=1e-4")
+    p.set_defaults(fn=fn)
+    return p
 
+
+def main(argv=None):
     ap = argparse.ArgumentParser(prog="omnidiff")
     sub = ap.add_subparsers(dest="cmd", required=True)
-    for name, cls in (("sft", SFTTrainer), ("rl", RLTrainer)):
-        p = sub.add_parser(name, help=f"{name} training from a config")
-        p.add_argument("-c", "--config", required=True)
-        p.add_argument("overrides", nargs="*", help="dotted overrides, e.g. rl.lr=1e-4")
-        p.set_defaults(fn=lambda a, cls=cls: _train(a, cls))
     p = sub.add_parser("sample", help="generate from a checkpoint directory")
     p.add_argument("--ckpt", required=True)
     p.add_argument("-n", type=int, default=8)
@@ -64,6 +62,8 @@ def main(argv=None):
     p.add_argument("overrides", nargs="*")
     p.set_defaults(fn=_sample)
     sub.add_parser("list", help="show registered components").set_defaults(fn=_list)
+    for ep in entry_points(COMMAND_GROUP):
+        ep.load()(sub)
     args = ap.parse_args(argv)
     args.fn(args)
 

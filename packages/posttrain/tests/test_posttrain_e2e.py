@@ -1,11 +1,12 @@
 """Every shipped config runs SFT -> RL -> inference end to end at toy size."""
 
+import numpy as np
 import torch
 
-from omnidiff import Pipeline, RLTrainer, SFTTrainer
-from omnidiff.sampling import step
-
-from .conftest import tiny_config
+from omnidiff.core import Pipeline, step
+from omnidiff.core.testing import tiny_config
+from omnidiff.posttrain import RLTrainer, SFTTrainer
+from omnidiff.posttrain.rl.algorithms import compute_advantages
 
 
 def test_sft_loss_is_finite(config_path, tmp_path):
@@ -49,10 +50,14 @@ def test_sft_rl_sample(config_path, tmp_path):
     assert torch.equal(gen.raw, again.raw)
 
 
-def test_plugin_components_from_config(tmp_path):
-    from .conftest import CONFIGS
-
-    path = next(p for p in CONFIGS if p.stem == "video_flow_grpo")
-    cfg = tiny_config(path, tmp_path, "plugins=[examples.custom_plugin]", "rl.reward={type: centered_blob}")
+def test_plugin_components_from_config(configs, tmp_path):
+    cfg = tiny_config(configs["video_flow_grpo"], tmp_path, "plugins=[examples.custom_plugin]", "rl.reward={type: centered_blob}")
     ro = RLTrainer(cfg).rollout()
     assert ro.rewards.shape == (4,) and ((ro.rewards >= 0) & (ro.rewards <= 1)).all()
+
+
+def test_group_advantages():
+    r = np.array([1.0, 3.0, 5.0, 5.0])
+    adv = compute_advantages(r, np.array([0, 0, 1, 1]), "group")
+    np.testing.assert_allclose(adv, [-1, 1, 0, 0], atol=1e-3)
+    assert abs(compute_advantages(r, np.zeros(4), "batch").mean()) < 1e-9

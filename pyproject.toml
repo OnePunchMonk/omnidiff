@@ -1,23 +1,27 @@
-[build-system]
-requires = ["setuptools>=68"]
-build-backend = "setuptools.build_meta"
-
+# uv workspace root. `uv sync` installs every package under packages/ in editable mode.
 [project]
-name = "omnidiff"
-version = "0.1.0"
-description = "RL post-training and inference for language, image and video diffusion models in plain PyTorch + NumPy."
-readme = "README.md"
-requires-python = ">=3.9"
-dependencies = ["torch>=2.2", "numpy>=1.24", "pyyaml>=6"]
+name = "omnidiff-workspace"
+version = "0.0.0"
+requires-python = ">=3.10"
+dependencies = ["omnidiff-core", "omnidiff-data", "omnidiff-reward", "omnidiff-posttrain", "omnidiff-distill"]
 
-[project.optional-dependencies]
+[dependency-groups]
 dev = ["pytest>=8"]
 
-[project.scripts]
-omnidiff = "omnidiff.cli:main"
+[tool.uv]
+package = false
 
-[tool.setuptools.packages.find]
-include = ["omnidiff*"]
+[tool.uv.workspace]
+members = ["packages/*"]
+
+[tool.uv.sources]
+omnidiff-core = { workspace = true }
+omnidiff-data = { workspace = true }
+omnidiff-reward = { workspace = true }
+omnidiff-posttrain = { workspace = true }
+omnidiff-distill = { workspace = true }
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
+testpaths = ["packages"]
+addopts = "--import-mode=importlib"
+pythonpath = ["."]

@@ -3,14 +3,12 @@ import pytest
 import torch
 import torch.nn as nn
 
-from omnidiff.codecs import TextCodec
-from omnidiff.config import apply_overrides, from_dict, load_config
-from omnidiff.nn.adapters import ImagePatchAdapter, VideoPatchAdapter
-from omnidiff.nn.lora import apply_lora, lora_disabled, merged_state_dict
-from omnidiff.registry import Registry
-from omnidiff.rl.algorithms import compute_advantages
-from omnidiff.rl.trainer import RLConfig
-from omnidiff.utils import to_grid, write_png
+from omnidiff.core.codecs import TextCodec
+from omnidiff.core.config import SamplingConfig, apply_overrides, from_dict, load_config
+from omnidiff.core.nn.adapters import ImagePatchAdapter, VideoPatchAdapter
+from omnidiff.core.nn.lora import apply_lora, lora_disabled, merged_state_dict
+from omnidiff.core.registry import Registry
+from omnidiff.core.utils import to_grid, write_png
 
 
 def test_registry_build_context_and_dotted_paths():
@@ -36,7 +34,7 @@ def test_config_overrides_and_floats(tmp_path):
     assert cfg == {"a": {"lr": 3e-4}, "b": {"c": [1, 2]}, "d": None}
     assert apply_overrides({}, ["x.y=hello"]) == {"x": {"y": "hello"}}
     with pytest.raises(KeyError, match="unknown keys"):
-        from_dict(RLConfig, {"not_a_field": 1})
+        from_dict(SamplingConfig, {"not_a_field": 1})
 
 
 @pytest.mark.parametrize("adapter,shape", [
@@ -73,13 +71,6 @@ def test_lora_is_noop_at_init_and_merges_exactly():
     plain.qkv, plain.fc2 = nn.Linear(8, 8), nn.Linear(8, 4)
     plain.load_state_dict(merged_state_dict(model))
     torch.testing.assert_close(plain.fc2(plain.qkv(x).relu()), after)
-
-
-def test_group_advantages():
-    r = np.array([1.0, 3.0, 5.0, 5.0])
-    adv = compute_advantages(r, np.array([0, 0, 1, 1]), "group")
-    np.testing.assert_allclose(adv, [-1, 1, 0, 0], atol=1e-3)
-    assert abs(compute_advantages(r, np.zeros(4), "batch").mean()) < 1e-9
 
 
 def test_text_codec_roundtrip():

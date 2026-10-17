@@ -9,7 +9,7 @@ Anything importable also works without registering: ``type: my_pkg.mod:MyClass``
 import numpy as np
 import torch.nn as nn
 
-from omnidiff.registry import CONDITIONERS, REWARDS
+from omnidiff.core.registry import CONDITIONERS, REWARDS
 
 
 @REWARDS.register("centered_blob")

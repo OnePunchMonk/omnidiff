@@ -10,7 +10,7 @@ from __future__ import annotations
 import numpy as np
 import torch
 
-from .registry import DATASETS
+from omnidiff.core.registry import DATASETS
 
 PALETTE = np.array([[1, 0, 0], [0, 1, 0], [0, 0, 1], [1, 1, 0], [1, 0, 1], [0, 1, 1]], dtype=np.float32)
 

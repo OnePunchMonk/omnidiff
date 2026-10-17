@@ -1,8 +1,10 @@
 # omnidiff
 
-RL post-training and inference for **language, image and video diffusion models**, built in plain PyTorch and NumPy. Every component plugs in through a registry.
+A diffusion monorepo for **language, image and video**, built in plain PyTorch and NumPy. It covers the layers that SGLang Diffusion (serving) and miles-diffusion (large-scale RL) leave open, on one shared core.
 
-The only dependencies are `torch`, `numpy` and `pyyaml`. It has no `diffusers`, `transformers`, `accelerate` or `trl`, so everything that runs is in this repo.
+Today it has the core plus RL/SFT post-training. Few-step distillation is next. Every component plugs in through a registry.
+
+`omnidiff-core` depends only on `torch`, `numpy` and `pyyaml`. It has no `diffusers`, `transformers`, `accelerate` or `trl`, so everything that runs is in this repo.
 
 ## The one idea
 
@@ -16,57 +18,63 @@ Every diffusion sampler is an MDP. The state is `(x_t, t, cond)`, the action is 
 
 `DiffusionProcess.transition(pred, x_t, t, t_next, x_next=None)` samples a step. Pass `x_next` and it scores a stored action instead. Rollouts and RL updates go through that same call, so the ratio for a fresh rollout is exactly 1 (`tests/test_e2e.py::test_rollout_log_probs_are_on_policy`).
 
-## Layout
+## Monorepo layout
+
+Goal, layer map and roadmap: **[docs/GOAL_AND_PLAN.md](docs/GOAL_AND_PLAN.md)**. Next deep dive: **[docs/scope/distillation.md](docs/scope/distillation.md)**.
 
 ```
-omnidiff/
-  registry.py          string -> constructor registries, context injection, `pkg.mod:Class` specs
-  config.py            YAML + dotted CLI overrides
-  build.py             config -> Components (codec, process, model, prompts)
-  processes/           gaussian.py  flow.py  masked.py   (forward noising, training loss, policy step, step KL)
-  nn/
-    adapters.py        tokens | image_patch | video_patch   modality <-> (B, N, D) tokens
-    backbones.py       dit: adaLN-Zero transformer, modality-agnostic
-    conditioners.py    none | class | vector             (cond dict -> (B, D), null branch for CFG)
-    denoiser.py        adapter -> backbone -> adapter; the model contract
-    lora.py            LoRA; disabled LoRA == frozen reference policy for KL
-  sampling.py          predict (with CFG), step, sample -> Trajectory
-  codecs.py            pixel | text (byte tokenizer)     data <-> process tensors (VAE goes here)
-  datasets.py          toy SFT data: blobs | moving_blob | text_lines
-  prompts.py           none | class | text               prompt sampling + encoding to cond
-  rewards.py           numpy rewards + composite
-  rl/algorithms.py     PPO-clip surrogate; grpo (group advantages) | ddpo (batch advantages); KL
-  rl/trainer.py        rollout -> reward -> advantages -> per-step clipped updates
-  sft.py               denoising pretraining / SFT (the base policy RL starts from)
-  pipeline.py          inference API
-configs/               one file per (modality, process, algorithm); each holds sft + rl + sampling
-examples/              custom_plugin.py
+packages/
+  core/       omnidiff-core       omnidiff.core       processes, models, sampling, inference, CLI   (torch + numpy only)
+  posttrain/  omnidiff-posttrain  omnidiff.posttrain  SFT, GRPO, DDPO                               done
+  distill/    omnidiff-distill    omnidiff.distill    few-step distillation                         scoping
+  reward/     omnidiff-reward     omnidiff.reward     rewards -> reward/eval harness                seed
+  data/       omnidiff-data       omnidiff.data       datasets -> data engine                       seed
+configs/      one YAML per recipe (sft + rl + sampling sections)
+docs/         goal, plan, per-layer scope docs
+examples/     custom_plugin.py
+```
+
+Every package is a separate distribution under the shared `omnidiff.*` namespace. A package plugs in by declaring entry points: `omnidiff.plugins` registers its components, and `omnidiff.commands` adds CLI subcommands. Installing a package is enough to make its components buildable from config.
+
+Inside `omnidiff.core`:
+
+```
+registry.py          string -> constructor registries, context injection, `pkg.mod:Class` specs, entry-point discovery
+config.py            YAML + dotted CLI overrides
+build.py             config -> Components (codec, process, model, prompts)
+processes/           gaussian.py  flow.py  masked.py   (forward noising, training loss, policy step, step KL)
+nn/                  adapters (tokens | image_patch | video_patch), DiT backbone, conditioners, denoiser, LoRA
+sampling.py          predict (with CFG), step, sample -> Trajectory
+codecs.py            pixel | text (byte tokenizer)     data <-> process tensors (a VAE goes here)
+prompts.py           none | class | text               prompt sampling + encoding to cond
+pipeline.py          inference API
+testing.py           tiny_config(): any config shrunk to seconds on CPU
 ```
 
 ## Quickstart
 
 ```bash
-pip install -e ".[dev]"
-pytest                                   # ~1 s, CPU
+uv sync                                  # installs every package editable into .venv
+uv run pytest                            # all packages, a few seconds on CPU
 
 # each config runs the whole loop on a laptop CPU in minutes
-python -m omnidiff sft -c configs/image_flow_grpo.yaml
-python -m omnidiff rl  -c configs/image_flow_grpo.yaml
-python -m omnidiff sample --ckpt runs/image_flow_grpo/rl/final --prompt 0 --prompt 1 --prompt 2 --prompt 3
+uv run omnidiff sft -c configs/image_flow_grpo.yaml
+uv run omnidiff rl  -c configs/image_flow_grpo.yaml
+uv run omnidiff sample --ckpt runs/image_flow_grpo/rl/final --prompt 0 --prompt 1 --prompt 2 --prompt 3
 
-python -m omnidiff sft -c configs/text_masked_grpo.yaml
-python -m omnidiff rl  -c configs/text_masked_grpo.yaml
-python -m omnidiff sample --ckpt runs/text_masked_grpo/rl/final --prompt "the cat" --prompt "a dog"
+uv run omnidiff sft -c configs/text_masked_grpo.yaml
+uv run omnidiff rl  -c configs/text_masked_grpo.yaml
+uv run omnidiff sample --ckpt runs/text_masked_grpo/rl/final --prompt "the cat" --prompt "a dog"
 
-python -m omnidiff list                  # everything registered
+uv run omnidiff list                     # everything registered by installed packages
 ```
 
-Override any key from the command line: `python -m omnidiff rl -c configs/video_flow_grpo.yaml rl.lr=1e-4 rl.lora=null device=cuda`.
+Override any key from the command line: `uv run omnidiff rl -c configs/video_flow_grpo.yaml rl.lr=1e-4 rl.lora=null device=cuda`.
 
 From Python:
 
 ```python
-from omnidiff import Pipeline
+from omnidiff.core import Pipeline
 pipe = Pipeline.from_checkpoint("runs/text_masked_grpo/rl/final")
 gen = pipe.generate(prompts=["the sun"], num_steps=32, seed=0)
 print(gen.samples)          # decoded: list[str] for text, float numpy in [0, 1] for pixels
@@ -85,14 +93,16 @@ The toy data and rewards exist so the full loop can be checked in minutes. They 
 
 ## Plugging things in
 
-Every config entry is `{type: name, ...kwargs}`. A `type` can be a registered name or any import path (`my_pkg.rewards:Aesthetic`). Modules listed under `plugins:` are imported first, so their `@REGISTRY.register(...)` decorators run.
+Every config entry is `{type: name, ...kwargs}`. A `type` can be a registered name or any import path (`my_pkg.rewards:Aesthetic`). Modules listed under `plugins:` are imported first, so their `@REGISTRY.register(...)` decorators run. Installed packages with an `omnidiff.plugins` entry point load automatically.
+
+A **new layer** is a new `packages/<name>/` with its own `pyproject.toml`. It depends on `omnidiff-core` and declares entry points: `omnidiff.plugins` for components and `omnidiff.commands` for CLI subcommands. `packages/posttrain/pyproject.toml` is the template.
 
 Constructors receive shared **context** by naming it in their signature: `dim`, `sample_shape`, `codec`, `mask_id`, `vocab_size`. That's how `TokenAdapter` gets the vocabulary from the tokenizer without the config repeating it.
 
 | to add | implement | register in |
 |---|---|---|
 | reward model | `__call__(samples, prompts) -> np.ndarray (B,)` | `REWARDS` |
-| RL objective | `advantages(rewards, groups)`, `loss(logp, old_logp, adv, kl) -> LossOutput`, `kl_coef` | `ALGORITHMS` |
+| RL objective | `advantages(rewards, groups)`, `loss(logp, old_logp, adv, kl) -> LossOutput`, `kl_coef` | `ALGORITHMS` (posttrain) |
 | diffusion process | `DiffusionProcess` (timesteps, prior, training_loss, transition, kl) | `PROCESSES` |
 | modality / tokenizer | `Adapter.embed / unembed` | `ADAPTERS` |
 | latent space (VAE) | codec `encode / decode` | `CODECS` |
@@ -111,9 +121,20 @@ See `examples/custom_plugin.py`.
 - **KL.** It is exact per step: Gaussian mean difference over 2σ², or for text, categorical KL weighted by the unmask probability. With LoRA the reference is the same model with adapters off, so there is no second copy in memory.
 - **`timestep_fraction`** trains a random subset of steps per minibatch (DanceGRPO / Flow-GRPO style).
 
+## Toy results (CPU, ~3 min per config)
+
+| config | reward, RL epoch 0 → 39 | notes |
+|---|---|---|
+| `text_masked_grpo` | 0.26 → 0.52 vowel fraction | reward-hacks into vowel spam with no KL, as expected |
+| `image_ddpm_ddpo` | 0.05 → 0.995 brightness | saturates |
+| `video_flow_grpo` | −0.0065 → −0.0033 | KL keeps it near the base |
+| `image_flow_grpo` | 0.03 → 0.08 red dominance, noisy | the blue class drifts to red; needs tuning |
+
 ## Not built yet
 
-- Multi-GPU (DDP/FSDP). The trainer is single-process.
-- Token-level cross-attention conditioning (pooled `vector` conditioning works today) and loaders for pretrained weights (SD3/FLUX/Wan/LLaDA). Both slot into `MODELS` / `CONDITIONERS` / `CODECS`.
-- Offline preference objectives (Diffusion-DPO, D3PO) and reward-gradient methods (DRaFT, ReFL).
-- Faster masked samplers (confidence-based remasking). These are deterministic selections, not policies with log-probs, so they would be inference-only.
+See the layer map in [docs/GOAL_AND_PLAN.md](docs/GOAL_AND_PLAN.md). Within the existing packages:
+
+- Multi-GPU (DDP/FSDP). Trainers are single-process.
+- Token-level cross-attention conditioning (pooled `vector` conditioning works) and loaders for pretrained weights (SD3/FLUX/Wan/LLaDA).
+- Offline preference objectives (Diffusion-DPO) and reward-gradient methods (DRaFT, ReFL).
+- Confidence-based remasking for masked diffusion. It isn't a policy with log-probs, so it would be an inference-only sampler.

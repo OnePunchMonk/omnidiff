@@ -1,0 +1,16 @@
+[build-system]
+requires = ["hatchling>=1.24"]
+build-backend = "hatchling.build"
+
+[project]
+name = "omnidiff-distill"
+version = "0.1.0"
+description = "Few-step distillation (scoping)."
+requires-python = ">=3.10"
+dependencies = ["omnidiff-core", "omnidiff-data", "omnidiff-reward"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/omnidiff"]
+
+[project.entry-points."omnidiff.plugins"]
+distill = "omnidiff.distill"

@@ -8,6 +8,7 @@ registered, which is the zero-boilerplate plugin path.
 from __future__ import annotations
 
 import importlib
+import importlib.metadata
 import inspect
 from typing import Any, Callable, Iterable
 
@@ -88,7 +89,32 @@ ALGORITHMS = Registry("algorithm")
 ALL = {r.name: r for r in (MODELS, ADAPTERS, BACKBONES, CONDITIONERS, PROCESSES, CODECS, DATASETS, PROMPTS, REWARDS, ALGORITHMS)}
 
 
-def load_plugins(modules: Iterable[str]) -> None:
-    """Import modules so their ``@REGISTRY.register`` decorators run."""
+PLUGIN_GROUP = "omnidiff.plugins"
+COMMAND_GROUP = "omnidiff.commands"
+
+
+def entry_points(group: str):
+    eps = importlib.metadata.entry_points()
+    return eps.select(group=group) if hasattr(eps, "select") else eps.get(group, [])
+
+
+_discovered = False
+
+
+def discover_plugins() -> None:
+    """Import every installed ``omnidiff.plugins`` entry point (each workspace package declares one).
+
+    Installing a package is enough to make its components buildable from a config.
+    """
+    global _discovered
+    if not _discovered:
+        _discovered = True
+        for ep in entry_points(PLUGIN_GROUP):
+            ep.load()
+
+
+def load_plugins(modules: Iterable[str] = ()) -> None:
+    """Load installed plugin packages, then import ``modules`` so their ``@REGISTRY.register`` decorators run."""
+    discover_plugins()
     for m in modules:
         importlib.import_module(m)

@@ -8,10 +8,10 @@ from pathlib import Path
 import numpy as np
 import torch
 
-from .build import Components, build
-from .config import from_dict
-from .registry import DATASETS
-from .utils import JsonlLogger, load_weights, save_checkpoint, seed_everything
+from omnidiff.core.build import Components, build
+from omnidiff.core.config import from_dict
+from omnidiff.core.registry import DATASETS
+from omnidiff.core.utils import JsonlLogger, load_weights, save_checkpoint, seed_everything
 
 
 @dataclass

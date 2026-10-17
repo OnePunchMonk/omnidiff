@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from .registry import REWARDS
+from omnidiff.core.registry import REWARDS
 
 
 def _per_sample_mean(x: np.ndarray) -> np.ndarray:

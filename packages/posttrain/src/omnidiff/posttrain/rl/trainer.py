@@ -10,12 +10,12 @@ from pathlib import Path
 import numpy as np
 import torch
 
-from ..build import Components, build
-from ..config import from_dict
-from ..nn.lora import apply_lora, has_lora, lora_disabled, merged_state_dict
-from ..registry import ALGORITHMS, REWARDS
-from ..sampling import Trajectory, sample, step
-from ..utils import JsonlLogger, index_cond, load_weights, make_generator, save_checkpoint, seed_everything
+from omnidiff.core.build import Components, build
+from omnidiff.core.config import from_dict
+from omnidiff.core.nn.lora import apply_lora, has_lora, lora_disabled, merged_state_dict
+from omnidiff.core.registry import ALGORITHMS, REWARDS
+from omnidiff.core.sampling import Trajectory, sample, step
+from omnidiff.core.utils import JsonlLogger, index_cond, load_weights, make_generator, save_checkpoint, seed_everything
 
 
 @dataclass

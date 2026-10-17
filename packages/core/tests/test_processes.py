@@ -3,9 +3,9 @@ import math
 import pytest
 import torch
 
-from omnidiff.processes.flow import FlowMatching
-from omnidiff.processes.gaussian import GaussianDiffusion
-from omnidiff.processes.masked import MaskedDiffusion
+from omnidiff.core.processes.flow import FlowMatching
+from omnidiff.core.processes.gaussian import GaussianDiffusion
+from omnidiff.core.processes.masked import MaskedDiffusion
 
 CONTINUOUS = [
     GaussianDiffusion(eta=1.0, reduction="sum"),
