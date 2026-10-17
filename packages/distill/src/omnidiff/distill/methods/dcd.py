@@ -47,6 +47,8 @@ class DiscreteConsistency(Distiller):
         self.target = copy.deepcopy(tr.student).requires_grad_(False).eval()
 
     def after_update(self, role, tr):
+        if role != "student":
+            return
         with torch.no_grad():
             state = tr.student.state_dict()
             for k, p in self.target.state_dict().items():
@@ -92,5 +94,11 @@ class DiscreteConsistency(Distiller):
         target = self.targets(tr, x_t, t, s, b.cond)
         logp = tr.process.log_probs(tr.student(x_t, t, b.cond))
         masked = x_t == mask
-        loss = (self.kl(target, logp) * masked).sum() / masked.sum().clamp(min=1)
-        return loss, {"dcd_kl": loss.item(), "mean_gap": (t - s).mean().item()}
+        n = masked.sum().clamp(min=1)
+        loss = (self.kl(target, logp) * masked).sum() / n
+        # the objective's fixed point is the teacher's one-step marginal, so KL(teacher || student) on
+        # fresh states tells "at the fixed point" (near 0) from "not training" (large)
+        with torch.no_grad():
+            p = tr.process.log_probs(tr.teacher_pred(x_t, t, b.cond)).exp()
+            to_teacher = (self.kl(p, logp.detach()) * masked).sum() / n
+        return loss, {"dcd_kl": loss.item(), "kl_to_teacher": to_teacher.item(), "mean_gap": (t - s).mean().item()}

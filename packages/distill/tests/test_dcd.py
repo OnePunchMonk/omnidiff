@@ -25,7 +25,7 @@ def tr(tmp_path_factory):
 def _state(tr, t):
     b = tr.data.batch(4)
     t = torch.full((4,), t)
-    return tr.process.q_sample(b.x0, t), t, b.cond
+    return tr.process.q_sample(b.x0, t, maskable=tr.method.maskable(b.cond)), t, b.cond
 
 
 def test_dcd_targets_are_distributions_and_hit_the_boundary(tr):
@@ -53,6 +53,24 @@ def test_dcd_fixed_point_zero_loss_when_student_equals_target_at_s_equals_t(tr):
     with torch.no_grad():
         logp2 = tr.process.log_probs(tr.student(x_t, t, cond) + torch.randn(*logp.shape))
     assert m.kl(target, logp2)[masked].mean() > 1e-3
+
+
+def test_dcd_mean_target_is_the_teacher_marginal_for_a_consistent_teacher(tr, monkeypatch):
+    # A teacher whose prediction ignores x and t is exactly self-consistent: its multi-step chain marginal
+    # equals its one-step marginal. Then the mean target over many teacher paths must equal that marginal.
+    n, L = 8192, tr.shape[0]
+    V = tr.process.log_probs(tr.student(torch.zeros(1, L, dtype=torch.long), torch.ones(1), {})).shape[-1]
+    fixed = torch.randn(L, V)
+    pred = lambda x, *a: fixed.expand(x.shape[0], L, V)  # noqa: E731
+    monkeypatch.setattr(tr, "teacher_pred", pred)
+    monkeypatch.setattr(tr.method, "target", pred)
+    x_t = torch.full((n, L), tr.process.mask_id)
+    t = torch.full((n,), 0.9)
+    for sub_steps in (1, 2):
+        monkeypatch.setattr(tr.method, "sub_steps", sub_steps)
+        mean = tr.method.targets(tr, x_t, t, torch.full((n,), 0.3), {}).mean(0)
+        expected = tr.process.log_probs(fixed).exp()
+        assert (mean - expected).abs().max() < 0.03
 
 
 def test_dcd_maskable_respects_prefix_and_loss_mask(tr):
