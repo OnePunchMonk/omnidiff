@@ -53,3 +53,36 @@ def test_dcd_fixed_point_zero_loss_when_student_equals_target_at_s_equals_t(tr):
     with torch.no_grad():
         logp2 = tr.process.log_probs(tr.student(x_t, t, cond) + torch.randn(*logp.shape))
     assert m.kl(target, logp2)[masked].mean() > 1e-3
+
+
+def test_dcd_maskable_respects_prefix_and_loss_mask(tr):
+    prefix = torch.tensor([[5, -1, -1, -1]])
+    loss_mask = torch.tensor([[True, True, True, False]])
+    m = tr.method.maskable
+    assert m({}) is None
+    assert m({"prefix": prefix}).tolist() == [[False, True, True, True]]
+    assert m({"loss_mask": loss_mask}).tolist() == [[True, True, True, False]]
+    assert m({"prefix": prefix, "loss_mask": loss_mask}).tolist() == [[False, True, True, False]]
+
+
+def test_dcd_teacher_steps_go_through_teacher_pred(tr, monkeypatch):
+    # the toy text teacher has no CFG branch, so guidance cannot change its output; check the call path
+    calls = []
+    orig = tr.teacher_pred
+    monkeypatch.setattr(tr, "teacher_pred", lambda *a: calls.append(1) or orig(*a))
+    x_t, t, cond = _state(tr, 0.8)
+    tr.method.targets(tr, x_t, t, torch.full((4,), 0.4), cond)
+    assert len(calls) == tr.method.sub_steps
+
+
+def test_dcd_target_ema_works_with_lora(tmp_path_factory):
+    teacher = SFTTrainer(tiny_config(ROOT / "configs" / "text_masked_grpo.yaml", tmp_path_factory.mktemp("t"))).train()
+    cfg = load_config(ROOT / "configs" / "distill" / "text_masked_dcd.yaml",
+                      ["device=cpu", f"output_dir={tmp_path_factory.mktemp('o')}", *TINY, "distill.lora={rank: 2, alpha: 2}"])
+    cfg["teacher"] = str(teacher)
+    tr = DistillTrainer(cfg)
+    assert set(tr.method.target.state_dict()) == set(tr.student.state_dict())
+    tr.train()
+    state, target = tr.student.state_dict(), tr.method.target.state_dict()
+    # the target follows the trainable LoRA weights, lagging them
+    assert any("lora" in k.lower() and not torch.equal(target[k], state[k]) for k in target)

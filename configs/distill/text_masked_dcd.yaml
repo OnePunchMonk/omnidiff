@@ -1,4 +1,5 @@
-# Discrete consistency distillation for masked diffusion: the student's clean-token prediction at x_t
+# Single-mask discrete consistency distillation (an ablation; not the multi-mask scheme of
+# 2607.19686) for masked diffusion: the student's clean-token prediction at x_t
 # is matched (KL) to the EMA target's prediction after 2 teacher ancestral steps to a random s < t;
 # s = 0 anchors it to the teacher's tokens.
 seed: 0

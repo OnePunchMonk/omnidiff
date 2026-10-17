@@ -12,7 +12,7 @@ from .base import Distiller
 
 @DISTILLERS.register("dcd")
 class DiscreteConsistency(Distiller):
-    """Multi-step consistency distillation for masked diffusion (discrete analogue of CD).
+    """Single-mask discrete consistency distillation for masked diffusion (an ablation).
 
     A consistency function maps any state on a teacher trajectory to the same clean sample. For an
     absorbing process the trajectory's endpoint is stochastic, so the function is the *distribution*
@@ -29,9 +29,11 @@ class DiscreteConsistency(Distiller):
     fixed point is a student that agrees with its target on every pair. ``s`` is drawn per example,
     so one network is trained for any step count.
 
-    This follows 2607.19686 (abstract only) in using a purely discrete consistency objective. Its
-    multi-mask forward process and shared-Gumbel coupling are not implemented: the teacher here has a
-    single mask state. Data is the SFT dataset (``data: text_lines``) or the teacher pool.
+    This is NOT the scheme of 2607.19686 (read from its abstract only). Its multi-mask forward process
+    and shared-Gumbel coupling are not implemented: the teacher here has a single mask state, and the
+    target is a factorised per-position distribution. A flat training KL is expected, since the
+    sampled one-hot targets carry irreducible entropy, and so is a weak few-step result. Data is the SFT
+    dataset (``data: text_lines``) or the teacher pool.
     """
 
     processes = ("masked",)
@@ -41,12 +43,17 @@ class DiscreteConsistency(Distiller):
         self.sub_steps, self.boundary_prob, self.target_decay, self.t_min = sub_steps, boundary_prob, target_decay, t_min
 
     def setup(self, tr):
-        self.target = copy.deepcopy(tr.teacher).requires_grad_(False).eval()
+        # copied from the student, after LoRA is applied, so the two share parameter and buffer names
+        self.target = copy.deepcopy(tr.student).requires_grad_(False).eval()
 
     def after_update(self, role, tr):
         with torch.no_grad():
-            for p, q in zip(self.target.parameters(), tr.student.parameters()):
-                p.lerp_(q, 1 - self.target_decay)
+            state = tr.student.state_dict()
+            for k, p in self.target.state_dict().items():
+                if p.is_floating_point():
+                    p.lerp_(state[k], 1 - self.target_decay)
+                else:
+                    p.copy_(state[k])
 
     @torch.no_grad()
     def targets(self, tr, x_t, t, s, cond):
@@ -55,7 +62,7 @@ class DiscreteConsistency(Distiller):
         x = x_t
         for j in range(self.sub_steps):
             a, b = t + (s - t) * j / self.sub_steps, t + (s - t) * (j + 1) / self.sub_steps
-            logits = tr.teacher(x, a, cond)
+            logits = tr.teacher_pred(x, a, cond)
             x = tr.teacher_process.transition(logits, x, a[:, None], b[:, None], generator=tr.gen).x_next
         probs = tr.process.log_probs(self.target(x, s, cond)).exp()
         decoded = (x_t == mask) & (x != mask)
@@ -66,17 +73,22 @@ class DiscreteConsistency(Distiller):
     def kl(target, logp):
         return (torch.xlogy(target, target) - target * logp.masked_fill(~logp.isfinite(), 0.0)).sum(-1)
 
+    @staticmethod
+    def maskable(cond):
+        """Positions that may be masked: inside the loss mask if there is one, and never a prefix."""
+        loss_mask, prefix = cond.get("loss_mask"), cond.get("prefix")
+        loss_mask = loss_mask.bool() if loss_mask is not None else None
+        if prefix is None:
+            return loss_mask
+        return prefix < 0 if loss_mask is None else loss_mask & (prefix < 0)
+
     def loss(self, role, tr):
         b = tr.data.batch(tr.dc.batch_size)
         B, mask = b.x0.shape[0], tr.process.mask_id
         rand = lambda: torch.rand(B, device=tr.device, generator=tr.gen)  # noqa: E731
         t = self.t_min + (1 - self.t_min) * rand()
         s = torch.where(rand() < self.boundary_prob, torch.zeros_like(t), t * rand())
-        # only free positions are masked: the pretraining loss mask if the data has one, else non-prefix positions
-        maskable = b.cond.get("loss_mask")
-        prefix = b.cond.get("prefix")
-        maskable = maskable.bool() if maskable is not None else None if prefix is None else prefix < 0
-        x_t = tr.process.q_sample(b.x0, t, generator=tr.gen, maskable=maskable)
+        x_t = tr.process.q_sample(b.x0, t, generator=tr.gen, maskable=self.maskable(b.cond))
         target = self.targets(tr, x_t, t, s, b.cond)
         logp = tr.process.log_probs(tr.student(x_t, t, b.cond))
         masked = x_t == mask
