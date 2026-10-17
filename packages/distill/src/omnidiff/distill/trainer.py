@@ -163,6 +163,8 @@ class DistillTrainer:
         if ptype not in self.method.processes:
             raise ValueError(f"{type(self.method).__name__} supports processes {self.method.processes}, not {ptype!r}")
         self.teacher_process = self._with_sampler(self.method.teacher_sampler or ("ode" if self.continuous else "ancestral"))
+        for k, v in self.method.teacher_process_defaults.items():
+            setattr(self.teacher_process, k, v)
         self.student_sampler = self.dc.sampler or (self.method.sampler if self.continuous else self.method.discrete_sampler)
         self.student_process = self._with_sampler(self.student_sampler)
         self.student_settings = {**self.method.student_process_defaults, **(self.dc.student_process or {})}

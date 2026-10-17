@@ -21,6 +21,10 @@ The student checkpoint is a normal omnidiff checkpoint. Its config carries the s
 | `consistency` | flow, gaussian | `renoise` | f(x_hi, t_hi) = sg f(teacher ODE step to t_lo); iCT stop-gradient target, pseudo-Huber, 1/Δt weighting | x0 (pool or dataset) |
 | `flow_map` | flow | `ode` (two-time) | average velocity u(x, t, s) trained with the MeanFlow identity using the teacher's velocity; d/dt by forward-mode JVP or finite difference; `s_mode: zero` gives a continuous-time consistency model | x0 (pool or dataset) |
 | `sdtt` | masked | ancestral | rounds of "student step = 2 teacher steps"; targets are the teacher's distribution at the sub-step where each token was decoded | x0 (dataset or pool) |
+| `rcm` | flow | `renoise` | flow map with `s_mode: zero` (a continuous-time consistency model) plus a DMD2 score regulariser | prompts and x0 |
+| `coupled_kd` | masked | `coupled` | the student gets the teacher's sampling noise and regresses the teacher's sample for it; `noise: gumbel` (L x V) or `uniform` (one inverse-CDF uniform per position, for real vocabularies) | teacher pool |
+
+**Flow-map teachers must be smooth in t.** With the default `1000 t` time embedding, a teacher's velocity jitters in t. JVPs then see the jitter, and the MeanFlow residual never falls. Train the teacher with `model.time_scale: 10`. `flow_map` warns otherwise. The diagnosis is in [docs/results/distillation_toy.md](../../docs/results/distillation_toy.md#flow-maps-need-a-teacher-that-is-smooth-in-t).
 
 ## The trainer
 
@@ -48,6 +52,8 @@ uv run omnidiff rl -c runs/distill/image_flow_dmd2/distill/final/config.yaml \
 | DMD2's generator gradient equals (x0_fake − x0_real)·w / numel | `test_dmd2_generator_gradient_is_the_score_difference` |
 | a flow-map student starts as the teacher's Euler sampler | `test_flow_map_student_starts_as_teacher_euler` |
 | the forward-mode JVP of the average velocity matches a finite difference | `test_flow_map_jvp_matches_finite_difference` |
+| the finite difference never queries t outside (0, 1] | `test_flow_map_finite_difference_stays_inside_the_time_range` |
+| at init the `coupled_kd` student reproduces the coupled teacher's pool exactly, for both noise types | `test_coupled_kd_student_starts_as_the_coupled_teacher` |
 | SDTT targets are distributions over clean tokens, and rounds snapshot the EMA student | `test_sdtt_targets_are_distributions_and_rounds_advance` |
 | the consistency boundary f(x, 0) = x holds for the student | `test_consistency_boundary_target_is_the_teacher_step` |
 | every shipped config trains, exports and samples | `test_distill_config_end_to_end` |

@@ -2,7 +2,7 @@
 
 A diffusion monorepo for **language, image and video**, built in plain PyTorch and NumPy. It covers the layers that SGLang Diffusion (serving) and miles-diffusion (large-scale RL) leave open, on one shared core.
 
-Today it has the core, RL/SFT post-training, and few-step distillation (KD, DMD2, consistency, flow maps and SDTT), plus a scorecard that compares students and teachers across step counts. Every component plugs in through a registry.
+Today it has the core, RL/SFT post-training, and few-step distillation (KD, DMD2, consistency, flow maps, rCM, SDTT and noise-conditioned text distillation), plus a scorecard that compares students and teachers across step counts. Every component plugs in through a registry.
 
 `omnidiff-core` depends only on `torch`, `numpy` and `pyyaml`. It has no `diffusers`, `transformers`, `accelerate` or `trl`, so everything that runs is in this repo.
 
@@ -26,7 +26,7 @@ Goal, layer map and roadmap: **[docs/GOAL_AND_PLAN.md](docs/GOAL_AND_PLAN.md)**.
 packages/
   core/       omnidiff-core       omnidiff.core       processes, models, sampling, inference, CLI   (torch + numpy only)
   posttrain/  omnidiff-posttrain  omnidiff.posttrain  SFT, GRPO, DDPO                               done
-  distill/    omnidiff-distill    omnidiff.distill    KD, DMD2, consistency, flow map, SDTT         v0
+  distill/    omnidiff-distill    omnidiff.distill    KD, DMD2, consistency, flow map, rCM, SDTT, coupled KD  v0
   reward/     omnidiff-reward     omnidiff.reward     rewards, set metrics, scorecard               seed+
   data/       omnidiff-data       omnidiff.data       datasets -> data engine                       seed
 configs/      one YAML per recipe (sft + rl + sampling sections)

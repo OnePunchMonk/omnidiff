@@ -28,23 +28,33 @@ class MaskedDiffusion(DiffusionProcess):
     noise per position and token (argmax(log p + g) is a categorical sample). With
     ``coupled_gumbel: 1`` the output distribution is exactly the ancestral one. Noise-conditioned
     students read ``cond["token_noise"]`` themselves and sample with ``coupled_gumbel: 0``.
+
+    ``coupled_noise: uniform`` replaces the (B, L, V) Gumbel noise with one uniform per position and
+    draws the token by inverting the CDF of p (in token-id order). It is just as exact, and the noise
+    stays O(L) for real vocabularies. ``coupled_gumbel: 0`` again means argmax.
     """
 
     sampler = "ancestral"  # for masked diffusion, "predict x0 then re-mask" is exactly the ancestral step
 
     def __init__(self, mask_id: int, temperature: float = 1.0, reduction: str = "sum", t_min: float = 1e-3,
-                 sampler: str = "ancestral", vocab_size: int | None = None, coupled_gumbel: float = 1.0):
+                 sampler: str = "ancestral", vocab_size: int | None = None, coupled_gumbel: float = 1.0,
+                 coupled_noise: str = "gumbel"):
         if sampler not in ("ancestral", "renoise", "coupled"):
             raise ValueError(f"unknown sampler {sampler!r}")
+        if coupled_noise not in ("gumbel", "uniform"):
+            raise ValueError(f"coupled_noise must be gumbel|uniform, got {coupled_noise!r}")
         self.mask_id, self.temperature, self.reduction, self.t_min = mask_id, temperature, reduction, t_min
         self.sampler = "ancestral" if sampler == "renoise" else sampler
-        self.vocab_size, self.coupled_gumbel = vocab_size, coupled_gumbel
+        self.vocab_size, self.coupled_gumbel, self.coupled_noise = vocab_size, coupled_gumbel, coupled_noise
 
     def init_noise(self, shape, device, generator=None) -> dict:
-        """Noise that makes coupled sampling deterministic: ``unmask_time`` (B, L), ``token_noise`` (B, L, V)."""
+        """Noise that makes coupled sampling deterministic: ``unmask_time`` (B, L) and ``token_noise``,
+        (B, L, V) Gumbel or (B, L) uniform."""
+        unif = lambda *s: torch.rand(s, device=device, generator=generator)  # noqa: E731
+        if self.coupled_noise == "uniform":
+            return {"unmask_time": unif(*shape), "token_noise": unif(*shape)}
         if self.vocab_size is None:
             raise ValueError("coupled sampling needs vocab_size")
-        unif = lambda *s: torch.rand(s, device=device, generator=generator)  # noqa: E731
         gumbel = -torch.log(-torch.log(unif(*shape, self.vocab_size).clamp(1e-20, 1 - 1e-7)))
         return {"unmask_time": unif(*shape), "token_noise": gumbel}
 
@@ -111,7 +121,14 @@ class MaskedDiffusion(DiffusionProcess):
         if x_next is None:
             tau = cond["unmask_time"]
             decode = (x_t == self.mask_id) & (tau >= t_next) & (tau < t)
-            tokens = (logp + self.coupled_gumbel * cond["token_noise"]).argmax(-1)
+            if self.coupled_gumbel == 0:
+                tokens = logp.argmax(-1)
+            elif self.coupled_noise == "uniform":  # inverse CDF; the first token whose CDF exceeds u has p > 0
+                cdf = logp.exp().cumsum(-1)
+                u = cond["token_noise"].unsqueeze(-1) * cdf[..., -1:]
+                tokens = torch.searchsorted(cdf, u, right=True).squeeze(-1).clamp(max=cdf.shape[-1] - 1)
+            else:
+                tokens = (logp + self.coupled_gumbel * cond["token_noise"]).argmax(-1)
             x_next = torch.where(decode, tokens, x_t)
         return Transition(x_next, None, {"logp": logp})
 

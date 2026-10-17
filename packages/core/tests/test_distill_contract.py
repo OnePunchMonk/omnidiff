@@ -12,11 +12,11 @@ from omnidiff.core.processes.masked import MaskedDiffusion
 from omnidiff.core.sampling import predict, sample
 
 
-def _image_model(two_time=False, num_classes=3):
+def _image_model(two_time=False, num_classes=3, **kw):
     torch.manual_seed(0)
     return build_model({"dim": 32, "adapter": {"type": "image_patch", "patch": 2},
                         "backbone": {"type": "dit", "depth": 1, "heads": 2},
-                        "conditioner": {"type": "class", "num_classes": num_classes}, "two_time": two_time},
+                        "conditioner": {"type": "class", "num_classes": num_classes}, "two_time": two_time, **kw},
                        sample_shape=(2, 4, 4))
 
 
@@ -129,7 +129,8 @@ def test_renoise_asks_two_time_models_for_the_jump_to_data():
     assert seen == [0.5, 0.0]
 
 
-def test_coupled_masked_sampler_matches_ancestral_statistics():
+@pytest.mark.parametrize("noise", ["gumbel", "uniform"])
+def test_coupled_masked_sampler_matches_ancestral_statistics(noise):
     """Coupled sampling is ancestral sampling made deterministic by up-front noise: same output law."""
     torch.manual_seed(0)
     V, L = 5, 3
@@ -144,7 +145,7 @@ def test_coupled_masked_sampler_matches_ancestral_statistics():
     model = Fixed()
     n = 20000
     anc = sample(model, MaskedDiffusion(mask_id=V - 1), (n, L), num_steps=3, device="cpu")
-    cpl_proc = MaskedDiffusion(mask_id=V - 1, sampler="coupled", vocab_size=V)
+    cpl_proc = MaskedDiffusion(mask_id=V - 1, sampler="coupled", vocab_size=V, coupled_noise=noise)
     cpl = sample(model, cpl_proc, (n, L), num_steps=3, device="cpu")
     for x in (anc, cpl):
         assert not (x == V - 1).any()
@@ -167,3 +168,14 @@ def test_token_adapter_noise_projection_starts_at_zero():
     assert all(k.startswith("adapter.noise_proj.") for k in missing)
     x, t = torch.randint(0, 6, (2, 5)), torch.tensor(0.5)
     torch.testing.assert_close(noisy(x, t, {"token_noise": torch.randn(2, 5, 7)}), plain(x, t))
+    scalar = build_model({"dim": 16, "adapter": {"type": "tokens", "noise_dim": 8},
+                          "backbone": {"type": "dit", "depth": 1, "heads": 2}}, vocab_size=7, sample_shape=(5,))
+    scalar.load_state_dict(plain.state_dict(), strict=False)
+    torch.testing.assert_close(scalar(x, t, {"token_noise": torch.rand(2, 5)}), plain(x, t))
+
+
+def test_time_scale_sets_both_time_embeddings():
+    default, small = _image_model(two_time=True), _image_model(two_time=True, time_scale=1.0)
+    assert default.t_embed.scale == default.s_embed.scale == 1000.0
+    assert small.t_embed.scale == small.s_embed.scale == 1.0
+    small.load_state_dict(default.state_dict())  # same parameters, so checkpoints stay interchangeable

@@ -108,6 +108,26 @@ def test_flow_map_jvp_matches_finite_difference(teachers, tmp_path):
     torch.testing.assert_close(d_jvp, d_fd, atol=5e-3, rtol=5e-2)
 
 
+def test_flow_map_finite_difference_stays_inside_the_time_range(teachers, tmp_path):
+    tr = _trainer(teachers, tmp_path, "image_flow_flow_map", "distill.method.derivative=finite_difference",
+                  "distill.method.fd_eps=0.05")
+    b = tr.data.batch(2)
+    t, s = torch.tensor([0.02, 0.6]), torch.tensor([0.0, 0.3])
+    z = tr.process.q_sample(b.x0, t, torch.randn_like(b.x0))
+    v = tr.teacher_pred(z, t, b.cond)
+    seen = []
+    student = tr.student
+    tr.student = lambda z_, t_, cond, s=None: (seen.append(t_.clone()), student(z_, t_, cond, s=s))[1]
+    _, dudt = tr.method.average_velocity(tr, z, t, s, v, b.cond)
+    tr.student = student
+    assert torch.isfinite(dudt).all()
+    torch.testing.assert_close(seen[1], torch.tensor([0.07, 0.55]))  # forward where t < eps, else backward
+    with torch.no_grad():
+        fwd = (student(z[:1] + 0.05 * v[:1], t[:1] + 0.05, {k: c[:1] for k, c in b.cond.items()}, s=s[:1])
+               - student(z[:1], t[:1], {k: c[:1] for k, c in b.cond.items()}, s=s[:1])) / 0.05
+    torch.testing.assert_close(dudt[:1], fwd, atol=1e-5, rtol=1e-4)
+
+
 def test_sdtt_targets_are_distributions_and_rounds_advance(teachers, tmp_path):
     tr = _trainer(teachers, tmp_path, "text_masked_sdtt", "distill.steps=3")
     m = tr.method
@@ -170,10 +190,14 @@ def test_renoise_student_is_rl_tunable(teachers, tmp_path):
     tr.update(ro)
 
 
-def test_coupled_kd_student_starts_as_the_coupled_teacher(teachers, tmp_path):
+@pytest.mark.parametrize("noise", ["gumbel", "uniform"])
+def test_coupled_kd_student_starts_as_the_coupled_teacher(noise, teachers, tmp_path):
     """At init the noise projection is zero, so with coupled_gumbel = 1 the student is the teacher's
     coupled sampler; the pool's samples are reproduced exactly when student and teacher share the grid."""
-    tr = _trainer(teachers, tmp_path, "text_masked_coupled_kd", "distill.student_steps=4", "distill.teacher_steps=4")
+    tr = _trainer(teachers, tmp_path, "text_masked_coupled_kd", "distill.student_steps=4", "distill.teacher_steps=4",
+                  f"distill.method.noise={noise}")
+    assert tr.teacher_process.coupled_noise == tr.student_process.coupled_noise == noise
+    assert tr.data.cond["token_noise"].dim() == (3 if noise == "gumbel" else 2)
     b = tr.data.batch(4)
     proc = copy.copy(tr.student_process)
     proc.coupled_gumbel = 1.0

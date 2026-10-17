@@ -16,6 +16,7 @@ class Distiller:
     discrete_sampler: str = "ancestral"  # ... and for masked diffusion
     teacher_sampler: str | None = None  # teacher pool sampler; default: ode / ancestral
     two_time: bool = False              # whether the student takes the target time s (flow maps)
+    teacher_process_defaults: dict = {}  # process settings for the teacher, applied before the pool is drawn
     student_process_defaults: dict = {}  # process settings for the student, exported with it
     new_param_prefixes: tuple[str, ...] = ("s_embed.",)  # student parameters the teacher does not have
 

@@ -24,22 +24,32 @@ class CoupledKD(Distiller):
     leaves that independence in place. Here the student sees every position's noise through
     attention, so it can reproduce the teacher's joint sample. Diversity comes from the noise, not
     from sampling the student's distribution, which is why it samples with ``coupled_gumbel: 0``.
+
+    ``noise: gumbel`` feeds the student the (L, V) Gumbel noise, which only fits small vocabularies.
+    ``noise: uniform`` couples through one inverse-CDF uniform per position instead, and the student
+    reads it as ``noise_features`` Fourier features: O(L) noise for any vocabulary size.
     """
 
     processes = ("masked",)
     discrete_sampler = "coupled"
     teacher_sampler = "coupled"
-    student_process_defaults = {"coupled_gumbel": 0.0}
     new_param_prefixes = ("s_embed.", "adapter.noise_proj.")
+
+    def __init__(self, noise: str = "gumbel", noise_features: int = 64):
+        if noise not in ("gumbel", "uniform"):
+            raise ValueError(f"noise must be gumbel|uniform, got {noise!r}")
+        self.noise, self.noise_features = noise, noise_features
+        self.teacher_process_defaults = {"coupled_gumbel": 1.0, "coupled_noise": noise}
+        self.student_process_defaults = {"coupled_gumbel": 0.0, "coupled_noise": noise}
 
     def student_spec(self, spec, tr):
         adapter = spec["adapter"] if isinstance(spec["adapter"], dict) else {"type": spec["adapter"]}
-        return {**spec, "adapter": {**adapter, "noise_dim": tr.c.context["vocab_size"]}}
+        dim = tr.c.context["vocab_size"] if self.noise == "gumbel" else self.noise_features
+        return {**spec, "adapter": {**adapter, "noise_dim": dim}}
 
     def setup(self, tr):
         if tr.dc.data != "teacher":
             raise ValueError("coupled_kd distils the teacher's own noise -> sample map: set distill.data: teacher")
-        tr.teacher_process.coupled_gumbel = 1.0
 
     def loss(self, role, tr):
         b = tr.data.batch(tr.dc.batch_size)

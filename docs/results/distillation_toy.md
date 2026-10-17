@@ -1,9 +1,11 @@
 # Few-step distillation on the toy tasks
 
-CPU-only, tiny DiTs (dim 128, depth 4) on synthetic data whose generating process is known exactly. Single seed.
-These results check how the methods behave relative to each other and to tuned baselines. They are not claims
-about real-scale models. Reproduce with `scripts/distill_toy_report.py` (tables below) and
-`scripts/g2_order_study.sh` (order study).
+CPU-only, tiny DiTs (dim 128, depth 4) on synthetic data whose generating process is known exactly. Single seed
+unless a table says otherwise. These results check how the methods behave relative to each other and to tuned
+baselines. They are not claims about real-scale models. Reproduce with:
+- `scripts/distill_toy_report.py`: the full tables;
+- `scripts/g2_order_study.sh` and `scripts/g2_kl_sweep.py`: the order study;
+- `scripts/flow_map_diagnose.py`: the flow-map diagnosis.
 
 ## Summary
 
@@ -19,8 +21,10 @@ about real-scale models. Reproduce with `scripts/distill_toy_report.py` (tables 
    - DMD2 and rCM give the most class-faithful, sharpest samples (class_acc 0.98–0.99) but lose recall (0.73–0.87). This is the mode-seeking signature.
    - The renoise sampler alone shows the same trade on the undistilled teacher: precision 0.98, recall 0.72.
    - KD keeps recall near 0.97.
-4. **Negative results:**
-   - **The flow-map (MeanFlow identity) student behaves like the teacher's Euler sampler at every step count.** It did not learn long jumps in 2000 steps.
+4. **Flow maps work once the teacher is smooth in t** ([section below](#flow-maps-need-a-teacher-that-is-smooth-in-t)).
+   - With the usual `1000 t` sinusoidal time embedding, the teacher's velocity jitters in t. Exact JVPs see the jitter, and the MeanFlow residual never falls.
+   - Retraining the teacher with `model.time_scale: 10` fixes this. One flow-map student then reaches data FD 0.18 at 1 step, against 0.68 for the best tuned teacher sampler, and it stays the best row at 2, 4 and 8 steps.
+5. **Negative results:**
    - **DMD2 on the Gaussian (VP, epsilon) teacher fails** (class_acc 0.23–0.36), even with x0 clipping. The DDPM teacher is itself weak here (class_acc 0.52 at 32 steps).
    - **DMD2 is best at 2 steps, not at the 4-step grid it was trained on**, and degrades badly at 8 steps, which it never saw.
 
@@ -39,12 +43,78 @@ Same RL budget for every arm (40 epochs, LoRA rank 8, no KL). Scored at 4 steps 
 - **C** keeps precision but loses coverage: recall 0.59, against 0.87 for DMD2 on the SFT teacher. That fits the hypothesis that distillation's mode-seeking compounds RL's collapse.
 - **Neither order dominates.** Next arm: B with a KL penalty to the distilled student (the reference is free, since it is the student with LoRA disabled).
 
+### With a KL anchor (3 seeds)
+
+`scripts/g2_kl_sweep.py` reruns A and B for kl_coef in {0, 0.01, 0.03, 0.1, 0.3, 1}, three seeds each. Both arms use LoRA, so each anchors to its own starting point: A to the SFT teacher, B to the distilled student. Each arm is scored at its own step count (A at 10, B at 4). Mean ± std over seeds; the full table is in [g2_kl_sweep.md](g2_kl_sweep.md).
+
+| arm | kl_coef | reward | fd | precision | recall | class_acc | shape_err |
+|---|---|---|---|---|---|---|---|
+| teacher, ODE, 10 steps | n/a | 0.032 | 0.056 | 0.95 | 0.94 | 0.92 | 0.042 |
+| A, 10 steps | 0 | 0.109 ± 0.017 | 0.86 ± 0.33 | 0.79 ± 0.01 | 0.95 ± 0.01 | 0.76 ± 0.05 | 0.123 |
+| A, 10 steps | 0.03 | 0.081 ± 0.014 | 0.48 ± 0.21 | 0.82 ± 0.02 | 0.96 ± 0.01 | 0.80 ± 0.05 | 0.112 |
+| A, 10 steps | 0.1 | 0.058 ± 0.008 | 0.24 ± 0.09 | 0.81 ± 0.01 | 0.96 ± 0.01 | 0.86 ± 0.03 | 0.101 |
+| B, 4 steps | 0 | 0.242 ± 0.034 | 5.0 ± 1.3 | 0.42 ± 0.08 | 0.94 ± 0.02 | 0.63 ± 0.04 | 0.158 |
+| B, 4 steps | 0.03 | 0.135 ± 0.006 | 1.73 ± 0.23 | 0.70 ± 0.03 | 0.91 ± 0.01 | 0.81 ± 0.02 | 0.112 |
+| B, 4 steps | 0.1 | 0.076 ± 0.001 | 0.69 ± 0.07 | 0.82 ± 0.01 | 0.86 ± 0.02 | 0.93 ± 0.02 | 0.063 |
+| B, 4 steps | 0.3 | 0.050 ± 0.001 | 0.45 ± 0.05 | 0.85 ± 0.01 | 0.82 ± 0.03 | 0.96 ± 0.01 | 0.048 |
+
+- **The anchor removes B's reward hacking.** Precision goes from 0.42 to 0.82 at kl 0.1 while the reward stays at about twice the teacher's.
+- **At matched reward, B trades coverage for fidelity, at 2.5x fewer steps.** Compare B at kl 0.1 with A at kl 0.03, both at reward about 0.08:
+  - B is better on class accuracy (0.93 vs 0.80) and shape error (0.063 vs 0.112).
+  - B is worse on recall (0.86 vs 0.96) and FD (0.69 vs 0.48).
+  - B's recall deficit is about what the DMD2 student had before any RL (0.87), so RL is not what costs the coverage.
+- **B's KL coefficient is the more useful knob.** Across seeds it is far more stable: reward std 0.001–0.006 for kl ≥ 0.03, against 0.008–0.017 for A.
+- **Single-seed numbers in the first table were within about 1.5 std of these means** (B at kl 0: 0.287 there, 0.242 ± 0.034 here).
+
+## Flow maps need a teacher that is smooth in t
+
+The first flow-map runs failed: the MeanFlow residual stayed at 2.4–3.0, and the student matched the teacher's Euler sampler at every step count. Three measurements (`scripts/flow_map_diagnose.py`) located the cause.
+
+1. **The teacher's trajectories are nearly straight.** Against the true flow map (a 64-step Euler integration), the teacher's one-step Euler jump has relative error 0.005 overall and 0.011 for jumps longer than 0.5. A curved field cannot be the problem.
+2. **Yet the residual's derivative term is huge, |du/dt|^2 ≈ 18.** The MeanFlow target is far from the true average velocity: the gap is 4.2 at t > 0.3, while the student itself is within 0.008 of it.
+3. **The teacher's velocity jitters in t.** The finite-difference acceleration along its own ODE grows as the step shrinks. A smooth field would converge instead.
+
+| teacher time embedding | h = 0.1 | 0.03 | 0.01 | 0.003 | 0.001 |
+|---|---|---|---|---|---|
+| sin/cos of 1000 t (default) | 0.53 | 3.1 | 7.9 | 17 | 22 |
+| sin/cos of 10 t | 0.28 | 0.34 | 0.37 | 0.39 | 0.39 |
+| sin/cos of t | 0.24 | 0.25 | 0.25 | 0.25 | 0.25 |
+
+The usual `1000 t` scale puts frequencies up to 1000 rad per unit of t into the network. That costs nothing for sampling, since integration averages the jitter out. But a JVP measures it exactly, so the self-referential MeanFlow target is mostly noise. This is consistent with sCM's report that the time conditioning has to change for continuous-time consistency training to be stable.
+
+Fix: `model.time_scale` (default 1000 for existing checkpoints). Teachers retrained with scale 10 and 1 have the same SFT loss (0.0319 and 0.0334, against 0.0320). The flow-map student was then trained exactly as before: JVP, 2000 steps.
+
+| | MeanFlow residual (end) | error vs true map, all jumps | jumps > 0.5 |
+|---|---|---|---|
+| scale 1000: teacher Euler / flow map | n/a / 2.4 | 0.0050 / 0.0037 | 0.0114 / 0.0104 |
+| scale 1000, finite difference with eps 0.05 | 0.21 | 0.0025 | 0.0046 |
+| scale 10: teacher Euler / flow map | n/a / 0.022 | 0.0036 / **0.0010** | 0.0106 / **0.0037** |
+| scale 1: teacher Euler / flow map | n/a / 0.0087 | 0.0039 / **0.0013** | 0.0111 / **0.0046** |
+
+Samples, data FD (comparable across teachers; lower is better). "Best teacher" is the better of the default and shift-3 samplers:
+
+| | NFE 1 | 2 | 4 | 8 | teacher at 32 |
+|---|---|---|---|---|---|
+| scale 1000, best teacher | 1.22 | 0.34 | 0.19 | 0.14 | 0.089 |
+| scale 1000, flow map (JVP) | 1.29 | 0.61 | 0.39 | 0.21 | |
+| scale 1000, flow map (finite difference, eps 0.05) | 2.05 | 1.07 | 0.50 | 0.25 | |
+| scale 1000, KD (4-step grid) | **0.145** | 0.18 | 0.24 | 0.20 | |
+| scale 10, best teacher | 0.68 | 0.31 | 0.15 | 0.12 | 0.094 |
+| scale 10, flow map (JVP) | 0.18 | 0.15 | **0.13** | **0.12** | |
+| scale 1, best teacher | 0.67 | 0.25 | 0.13 | 0.12 | 0.077 |
+| scale 1, flow map (JVP) | 0.15 | **0.13** | **0.13** | 0.13 | |
+
+- **One flow-map student covers every step count and improves monotonically with NFE.** Students trained on a fixed grid do not: KD degrades away from its grid, and DMD2 does too.
+- **Smoothing the derivative instead does not work.** A finite difference with a large step lowers the residual, but its bias makes the samples worse than the teacher's.
+- **The smoother teachers are also better few-step samplers on their own.** Data FD at 4 steps falls from 0.33 to 0.19 to 0.15 for scales 1000, 10 and 1. This is a single seed, and the scale-1 teacher has a slightly worse shape error (0.069 against 0.042).
+- `flow_map` now warns when the teacher's time scale is above 100.
+
 ## Open issues
 
-- **Flow-map objective.** This is not a dead-parameter bug: the s-embedding's output layer moved from 0 to norm 0.97. But the MeanFlow residual stayed at 2.4–3.0 for all 2000 steps. At initialisation the residual is (t - s)^2 |dv/dt|^2, which says the teacher's velocity field is strongly curved on this toy. Next: a curriculum on the gap t - s (start near 0 and widen), many more steps, and a JVP-versus-finite-difference comparison once it fits.
+- **Flow maps: resolved.** The cause was the teacher's time embedding, not the objective (see above). Open: whether the other methods (consistency, DMD2, rCM) also gain from a smooth teacher, and whether to change the default for new configs.
 - **DMD2's best step count differs from its trained grid:** investigate backward simulation and the grid.
-- **Scale up `coupled_kd`.** On real tokenizers the per-token Gumbel input is V-dimensional, so it needs a low-rank or top-k encoding of the noise.
-- **Seeds and confidence intervals** before any of this is stated more strongly.
+- **`coupled_kd` at real vocabulary sizes: first step done.** `coupled_kd` with `noise: uniform` couples through one inverse-CDF uniform per position, so the student's noise input is L scalars instead of L x V Gumbels. On the toy it nearly matches the Gumbel version: validity 0.35 / 0.49 / 0.64 / 0.77 at 1 / 2 / 4 / 8 steps, against 0.45 / 0.55 / 0.66 / 0.74, with coverage 0.83–0.94. Open: a real tokenizer and model. The inverse CDF follows token-id order, so a learned token ordering may help.
+- **Seeds and confidence intervals.** Done for the order study only. The other tables are still single-seed.
 
 ## Full tables
 

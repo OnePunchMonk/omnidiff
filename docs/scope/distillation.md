@@ -172,12 +172,14 @@ Models of 1B+ parameters, FSDP, sparse attention, causal/streaming students (Sel
 | multi-role trainer, teacher pool, EMA, export with sampler spec | done | `omnidiff.distill.trainer` |
 | `kd`, `dmd2` (+ GAN head), `consistency`, `flow_map`, `sdtt` | done | `omnidiff.distill.methods` |
 | scorecard: FD / precision / recall vs teacher and data, diversity, oracles, reward, latency | done | `omnidiff.reward.scorecard`, dataset `oracle()` |
-| RL on few-step students | done; order study in results | `test_renoise_student_is_rl_tunable` |
+| RL on few-step students | done; order study with a KL anchor, 3 seeds, in results | `test_renoise_student_is_rl_tunable`, `scripts/g2_kl_sweep.py` |
 | toy results | done (single seed): see [docs/results/distillation_toy.md](../results/distillation_toy.md) | |
 | noise-conditioned text distillation (`coupled_kd`) | done; 4-step validity 0.66 against 0.20 for the tuned teacher on the toy | `methods/coupled_kd.py` |
+| `coupled_kd` with O(L) noise (inverse-CDF uniforms) for real vocabularies | done on the toy (4-step validity 0.64) | `MaskedDiffusion(coupled_noise="uniform")`, `method.noise: uniform` |
+| flow maps that learn long jumps | done: needs a teacher that is smooth in t (`model.time_scale: 10`); 1-step data FD 0.18 against 0.68 | `scripts/flow_map_diagnose.py` |
 | tuned-baseline rows in the scorecard (teacher + sampler/temperature overrides) | done | `run_scorecard(variants=...)`, `--ref-variant` |
 | discrete consistency (DCD / multi-mask) | not started; read 2607.19686 first | |
-| rCM (flow map with `s_mode: zero` + DMD regulariser) | not started; needs composable objectives | |
+| rCM (flow map with `s_mode: zero` + DMD regulariser) | done (toy) | `methods/rcm.py` |
 | progressive distillation rounds for continuous processes | not started | |
 
 ## References

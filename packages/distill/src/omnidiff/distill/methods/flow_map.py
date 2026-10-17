@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import warnings
+
 import torch
 from torch.func import jvp
 
@@ -41,6 +43,13 @@ class FlowMapDistillation(Distiller):
         # s = 0 only: a consistency model, sampled by jumping to x0 and re-noising
         self.sampler = "renoise" if s_mode == "zero" else "ode"
 
+    def setup(self, tr):
+        scale = getattr(getattr(tr.teacher, "t_embed", None), "scale", None)
+        if scale is not None and scale > 100:
+            warnings.warn(f"flow_map teacher has time_scale={scale:g}: its velocity jitters in t, so exact time "
+                          "derivatives are mostly noise and the MeanFlow residual will not fall. Train the teacher "
+                          "with model.time_scale: 10 (see docs/results/distillation_toy.md).", stacklevel=2)
+
     def sample_times(self, B: int, tr):
         if self.time_sampling == "uniform":
             t = torch.rand(B, device=tr.device)
@@ -60,8 +69,9 @@ class FlowMapDistillation(Distiller):
             return u, dudt.detach()
         u = fn(z, t)
         with torch.no_grad():
-            h = self.fd_eps
-            dudt = (u - fn(z - h * v, t - h)) / h  # backward difference keeps t - h inside (0, 1]
+            # step backwards along the ODE, or forwards where t - eps would leave (0, 1]
+            h = torch.where(t - self.fd_eps > 0, -self.fd_eps, self.fd_eps)
+            dudt = (fn(z + bcast(h, z) * v, t + h) - u) / bcast(h, z)
         return u, dudt
 
     def loss(self, role, tr):

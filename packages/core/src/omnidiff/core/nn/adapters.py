@@ -6,6 +6,8 @@ of picking an adapter; everything downstream of it is shared.
 
 from __future__ import annotations
 
+import math
+
 import torch
 import torch.nn as nn
 
@@ -27,7 +29,9 @@ class TokenAdapter(Adapter):
     """Token ids (B, L) -> logits (B, L, vocab_size). Used with masked (discrete) diffusion.
 
     ``noise_dim > 0`` adds a zero-initialised projection of per-position noise (``cond["token_noise"]``),
-    for students that are a deterministic function of the sampling noise (``coupled_kd``).
+    for students that are a deterministic function of the sampling noise (``coupled_kd``). Noise is either
+    a (B, L, noise_dim) vector or a (B, L) scalar in [0, 1), which is expanded into ``noise_dim`` Fourier
+    features with frequencies from 1 to 2^10 cycles.
     """
 
     def __init__(self, dim: int, vocab_size: int, sample_shape: tuple[int, ...], noise_dim: int = 0):
@@ -42,10 +46,17 @@ class TokenAdapter(Adapter):
             self.noise_proj = nn.Linear(noise_dim, dim)
             nn.init.zeros_(self.noise_proj.weight)
             nn.init.zeros_(self.noise_proj.bias)
+            self.register_buffer("noise_freqs", 2 * math.pi * 2.0 ** torch.linspace(0, 10, noise_dim // 2),
+                                 persistent=False)
 
     def embed(self, x, noise=None):
         h = self.tok(x) + self.pos[:, : x.shape[1]]
-        return h if noise is None else h + self.noise_proj(noise)
+        if noise is None:
+            return h
+        if noise.dim() == x.dim():  # scalar per position
+            arg = noise.float().unsqueeze(-1) * self.noise_freqs
+            noise = torch.cat([arg.cos(), arg.sin()], -1)
+        return h + self.noise_proj(noise)
 
     def unembed(self, h, x):
         return self.head(h)

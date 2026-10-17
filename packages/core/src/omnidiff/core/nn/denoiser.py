@@ -20,13 +20,15 @@ from .layers import TimestepEmbedding
 
 class Denoiser(nn.Module):
     def __init__(self, adapter: nn.Module, backbone: nn.Module, conditioner: nn.Module, dim: int,
-                 two_time: bool = False):
+                 two_time: bool = False, time_scale: float = 1000.0):
         super().__init__()
         self.adapter, self.backbone, self.conditioner = adapter, backbone, conditioner
-        self.t_embed = TimestepEmbedding(dim)
+        # time_scale multiplies t before the sinusoidal features. 1000 is the DDPM convention; it makes the
+        # output jitter in t, which breaks exact time derivatives (JVPs). Flow-map teachers want a small scale.
+        self.t_embed = TimestepEmbedding(dim, scale=time_scale)
         self.two_time = two_time
         if two_time:
-            self.s_embed = TimestepEmbedding(dim)  # embeds the gap t - s
+            self.s_embed = TimestepEmbedding(dim, scale=time_scale)  # embeds the gap t - s
             nn.init.zeros_(self.s_embed.mlp[-1].weight)
             nn.init.zeros_(self.s_embed.mlp[-1].bias)
 
@@ -55,7 +57,8 @@ def _per_sample(t, batch_size: int, device) -> torch.Tensor:
 
 
 @MODELS.register("denoiser")
-def denoiser(dim: int, adapter, backbone="dit", conditioner="none", two_time: bool = False, **context) -> Denoiser:
+def denoiser(dim: int, adapter, backbone="dit", conditioner="none", two_time: bool = False,
+             time_scale: float = 1000.0, **context) -> Denoiser:
     context["dim"] = dim
     return Denoiser(
         ADAPTERS.build(adapter, **context),
@@ -63,6 +66,7 @@ def denoiser(dim: int, adapter, backbone="dit", conditioner="none", two_time: bo
         CONDITIONERS.build(conditioner, **context),
         dim,
         two_time,
+        time_scale,
     )
 
 
