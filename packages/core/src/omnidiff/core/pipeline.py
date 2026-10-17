@@ -41,8 +41,12 @@ class Pipeline:
 
     @torch.no_grad()
     def generate(self, prompts: list | None = None, n: int | None = None, num_steps: int | None = None,
-                 guidance_scale: float | None = None, seed: int = 0, return_trajectory: bool = False) -> Generation:
+                 guidance_scale: float | None = None, seed: int = 0, return_trajectory: bool = False,
+                 timesteps=None) -> Generation:
+        """``num_steps`` alone uses the process's default grid; otherwise ``timesteps`` or the config's grid."""
         c = self.c
+        if timesteps is None and num_steps is None:
+            timesteps = c.sampling.timesteps
         if prompts is None:
             prompts = c.prompts.sample(n or 1, np.random.default_rng(seed))
         cond = c.prompts.encode(prompts, c.device)
@@ -50,7 +54,7 @@ class Pipeline:
             c.model, c.process, (len(prompts), *c.sample_shape), cond,
             num_steps or c.sampling.num_steps,
             c.sampling.guidance_scale if guidance_scale is None else guidance_scale,
-            generator=make_generator(seed, c.device), keep_trajectory=return_trajectory,
+            generator=make_generator(seed, c.device), keep_trajectory=return_trajectory, timesteps=timesteps,
         )
         traj = out if return_trajectory else None
         x = traj.samples if return_trajectory else out

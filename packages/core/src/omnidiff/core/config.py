@@ -74,3 +74,4 @@ def from_dict(cls, data: dict | None):
 class SamplingConfig:
     num_steps: int = 20
     guidance_scale: float = 1.0
+    timesteps: list[float] | None = None  # explicit descending grid from 1 to 0; overrides num_steps

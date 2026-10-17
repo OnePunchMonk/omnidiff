@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import math
 
 import torch
@@ -43,6 +44,20 @@ def sincos_nd(dim: int, grid: tuple[int, ...]) -> torch.Tensor:
     return F.pad(emb, (0, dim - emb.shape[1]))
 
 
+_MATH_ATTENTION = False
+
+
+@contextlib.contextmanager
+def math_attention():
+    """Use explicit softmax attention. Forward-mode AD (``torch.func.jvp``) works through it; the fused SDPA kernels have no JVP rule."""
+    global _MATH_ATTENTION
+    prev, _MATH_ATTENTION = _MATH_ATTENTION, True
+    try:
+        yield
+    finally:
+        _MATH_ATTENTION = prev
+
+
 class Attention(nn.Module):
     def __init__(self, dim: int, heads: int):
         super().__init__()
@@ -55,7 +70,13 @@ class Attention(nn.Module):
     def forward(self, x: torch.Tensor, attn_mask: torch.Tensor | None = None) -> torch.Tensor:
         B, N, D = x.shape
         q, k, v = self.qkv(x).view(B, N, 3, self.heads, D // self.heads).permute(2, 0, 3, 1, 4)
-        out = F.scaled_dot_product_attention(q, k, v, attn_mask=attn_mask)
+        if _MATH_ATTENTION:
+            scores = (q @ k.transpose(-2, -1)) / math.sqrt(q.shape[-1])
+            if attn_mask is not None:
+                scores = scores + attn_mask if attn_mask.dtype != torch.bool else scores.masked_fill(~attn_mask, float("-inf"))
+            out = scores.softmax(-1) @ v
+        else:
+            out = F.scaled_dot_product_attention(q, k, v, attn_mask=attn_mask)
         return self.proj(out.transpose(1, 2).reshape(B, N, D))
 
 

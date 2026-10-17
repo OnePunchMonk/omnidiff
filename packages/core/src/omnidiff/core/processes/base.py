@@ -65,5 +65,68 @@ def expand_like(v: torch.Tensor, x: torch.Tensor) -> torch.Tensor:
     return v.view(-1, *([1] * (x.dim() - 1)))
 
 
+def bcast(t, x: torch.Tensor) -> torch.Tensor:
+    """A scalar or per-sample (B,) time, shaped to broadcast against ``x``."""
+    t = torch.as_tensor(t, device=x.device, dtype=torch.float32)
+    return t if t.dim() == 0 else expand_like(t, x)
+
+
+class ContinuousProcess(DiffusionProcess):
+    """Processes with ``x_t = alpha(t) x0 + sigma(t) noise``.
+
+    Subclasses define the schedule (``alpha_sigma``) and how the model output maps
+    to x0 / noise. Everything distillation needs follows from those: forward
+    noising, the deterministic probability-flow step, and the x0-renoise step used
+    by consistency and DMD-style few-step students. Times may be scalars or (B,).
+    """
+
+    sampler: str
+
+    @abstractmethod
+    def alpha_sigma(self, t: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        ...
+
+    @abstractmethod
+    def to_x0(self, pred, x_t, t) -> torch.Tensor:
+        ...
+
+    @abstractmethod
+    def to_eps(self, pred, x_t, t) -> torch.Tensor:
+        ...
+
+    def q_sample(self, x0, t, noise) -> torch.Tensor:
+        a, s = self.alpha_sigma(bcast(t, x0))
+        return a * x0 + s * noise
+
+    def ode_step(self, pred, x_t, t, t_next) -> torch.Tensor:
+        """Deterministic probability-flow step (DDIM with eta=0 / Euler for rectified flow)."""
+        return self.q_sample(self.to_x0(pred, x_t, t), t_next, self.to_eps(pred, x_t, t))
+
+    def renoise_transition(self, pred, x_t, t, t_next, x_next=None, generator=None) -> Transition:
+        """Jump to the predicted x0, then re-noise it to ``t_next`` with fresh noise.
+
+        This is the multistep sampler of consistency models and DMD2. It is a Gaussian
+        policy, ``N(alpha(s) x0_hat, sigma(s)^2 I)``, so few-step students trained with
+        it can be RL-tuned with exact log-probs. The final step (sigma = 0) is deterministic.
+        """
+        x0 = self.to_x0(pred, x_t, t)
+        a, std = self.alpha_sigma(torch.as_tensor(t_next, device=x_t.device, dtype=torch.float32))
+        mean = a * x0
+        stats = {"mean": mean, "std": std}
+        if float(std) == 0.0:
+            return Transition(mean if x_next is None else x_next, None, stats)
+        if x_next is None:
+            x_next = mean + std * randn(mean, generator)
+        return Transition(x_next, reduce(gaussian_log_prob(x_next, mean, std), self.reduction), stats)
+
+    def ode_transition(self, pred, x_t, t, t_next, x_next=None) -> Transition:
+        mean = self.ode_step(pred, x_t, t, t_next)
+        return Transition(mean if x_next is None else x_next, None, {"mean": mean})
+
+    def kl(self, new, ref):
+        diff = (new.stats["mean"] - ref.stats["mean"]) ** 2
+        return reduce(diff / (2 * new.stats["std"] ** 2), self.reduction)
+
+
 def randn(x: torch.Tensor, generator=None) -> torch.Tensor:
     return torch.randn(x.shape, device=x.device, dtype=x.dtype, generator=generator)

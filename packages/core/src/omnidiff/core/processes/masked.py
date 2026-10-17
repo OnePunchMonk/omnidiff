@@ -23,8 +23,26 @@ class MaskedDiffusion(DiffusionProcess):
     is (B, L) with a token id where the position is fixed and -1 where it is free.
     """
 
-    def __init__(self, mask_id: int, temperature: float = 1.0, reduction: str = "sum", t_min: float = 1e-3):
+    sampler = "ancestral"  # for masked diffusion, "predict x0 then re-mask" is exactly the ancestral step
+
+    def __init__(self, mask_id: int, temperature: float = 1.0, reduction: str = "sum", t_min: float = 1e-3,
+                 sampler: str = "ancestral"):
+        if sampler not in ("ancestral", "renoise"):
+            raise ValueError(f"unknown sampler {sampler!r}")
         self.mask_id, self.temperature, self.reduction, self.t_min = mask_id, temperature, reduction, t_min
+
+    def q_sample(self, x0, t, generator=None, maskable=None):
+        """Mask each position with probability t (scalar or (B,)); positions outside ``maskable`` are kept."""
+        t = torch.as_tensor(t, device=x0.device, dtype=torch.float32)
+        t = t.view(-1, 1) if t.dim() else t
+        masked = torch.rand(x0.shape, device=x0.device, generator=generator) < t
+        if maskable is not None:
+            masked = masked & maskable
+        return torch.where(masked, self.mask_id, x0)
+
+    def log_probs(self, logits):
+        """Per-position log-probabilities over clean tokens, with the mask token excluded."""
+        return self._log_probs(logits)
 
     def timesteps(self, num_steps, device):
         return torch.linspace(1.0, 0.0, num_steps + 1, device=device)
@@ -37,12 +55,13 @@ class MaskedDiffusion(DiffusionProcess):
         return x
 
     def training_loss(self, model, x0, cond, drop_cond=None):
-        B, L = x0.shape
+        B = x0.shape[0]
         t = torch.rand(B, device=x0.device) * (1 - self.t_min) + self.t_min
         maskable = (cond or {}).get("loss_mask")
         maskable = torch.ones_like(x0, dtype=torch.bool) if maskable is None else maskable.bool()
-        masked = (torch.rand(B, L, device=x0.device) < t[:, None]) & maskable
-        logits = model(torch.where(masked, self.mask_id, x0), t, cond, drop_cond)
+        x_t = self.q_sample(x0, t, maskable=maskable)
+        masked = x_t == self.mask_id
+        logits = model(x_t, t, cond, drop_cond)
         nll = F.cross_entropy(logits.float().transpose(1, 2), x0, reduction="none")
         # MDLM's ELBO weight for the linear schedule is 1 / t.
         return (nll * masked / t[:, None]).sum() / maskable.sum().clamp(min=1)

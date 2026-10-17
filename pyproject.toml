@@ -25,3 +25,4 @@ omnidiff-distill = { workspace = true }
 testpaths = ["packages"]
 addopts = "--import-mode=importlib"
 pythonpath = ["."]
+filterwarnings = ["ignore:`torch.jit.script` is deprecated:FutureWarning"]

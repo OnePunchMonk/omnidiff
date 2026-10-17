@@ -85,8 +85,11 @@ DATASETS = Registry("dataset")
 PROMPTS = Registry("prompt source")
 REWARDS = Registry("reward")
 ALGORITHMS = Registry("algorithm")
+DISTILLERS = Registry("distiller")
+METRICS = Registry("metric")
 
-ALL = {r.name: r for r in (MODELS, ADAPTERS, BACKBONES, CONDITIONERS, PROCESSES, CODECS, DATASETS, PROMPTS, REWARDS, ALGORITHMS)}
+ALL = {r.name: r for r in (MODELS, ADAPTERS, BACKBONES, CONDITIONERS, PROCESSES, CODECS, DATASETS, PROMPTS,
+                           REWARDS, ALGORITHMS, DISTILLERS, METRICS)}
 
 
 PLUGIN_GROUP = "omnidiff.plugins"
