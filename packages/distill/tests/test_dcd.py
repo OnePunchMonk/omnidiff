@@ -2,7 +2,6 @@ from pathlib import Path
 
 import pytest
 import torch
-
 from diffusion_omni.core.config import load_config
 from diffusion_omni.core.testing import tiny_config
 from diffusion_omni.distill import DistillTrainer

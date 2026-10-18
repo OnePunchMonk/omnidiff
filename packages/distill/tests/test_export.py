@@ -5,7 +5,6 @@ from pathlib import Path
 import numpy as np
 import pytest
 import torch
-
 from diffusion_omni.core import Pipeline
 from diffusion_omni.core.config import load_config, save_config
 from diffusion_omni.core.testing import tiny_config

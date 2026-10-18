@@ -3,7 +3,6 @@ from __future__ import annotations
 import copy
 
 import torch
-
 from diffusion_omni.core.registry import DISTILLERS
 
 from .base import Distiller

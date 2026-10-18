@@ -2,7 +2,6 @@ import math
 
 import pytest
 import torch
-
 from diffusion_omni.core.processes.flow import FlowMatching
 from diffusion_omni.core.processes.gaussian import GaussianDiffusion
 from diffusion_omni.core.processes.masked import MaskedDiffusion

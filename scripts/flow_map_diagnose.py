@@ -17,11 +17,10 @@ import argparse
 
 import numpy as np
 import torch
-
 from diffusion_omni.core.config import load_config
 from diffusion_omni.core.pipeline import Pipeline
-from diffusion_omni.core.registry import discover_plugins
 from diffusion_omni.core.processes.base import bcast
+from diffusion_omni.core.registry import discover_plugins
 from diffusion_omni.core.sampling import predict, sample
 
 GAPS = [(0.0, 0.1), (0.1, 0.25), (0.25, 0.5), (0.5, 1.0)]

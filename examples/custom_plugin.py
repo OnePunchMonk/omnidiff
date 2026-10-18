@@ -8,7 +8,6 @@ Anything importable also works without registering: ``type: my_pkg.mod:MyClass``
 
 import numpy as np
 import torch.nn as nn
-
 from diffusion_omni.core.registry import CONDITIONERS, REWARDS
 
 

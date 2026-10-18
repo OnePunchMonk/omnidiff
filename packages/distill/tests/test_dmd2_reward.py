@@ -3,7 +3,6 @@ from pathlib import Path
 import numpy as np
 import pytest
 import torch
-
 from diffusion_omni.core.config import load_config
 from diffusion_omni.core.registry import REWARDS
 from diffusion_omni.core.testing import tiny_config

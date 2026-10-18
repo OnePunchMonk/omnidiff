@@ -2,7 +2,6 @@
 
 import numpy as np
 import torch
-
 from diffusion_omni.core import Pipeline, step
 from diffusion_omni.core.testing import tiny_config
 from diffusion_omni.posttrain import RLTrainer, SFTTrainer

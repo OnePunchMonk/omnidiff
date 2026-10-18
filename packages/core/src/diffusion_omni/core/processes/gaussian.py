@@ -6,7 +6,14 @@ import torch
 import torch.nn.functional as F
 
 from ..registry import PROCESSES
-from .base import ContinuousProcess, Transition, bcast, expand_like, gaussian_log_prob, randn, reduce
+from .base import (
+    ContinuousProcess,
+    Transition,
+    bcast,
+    gaussian_log_prob,
+    randn,
+    reduce,
+)
 
 
 @PROCESSES.register("gaussian")

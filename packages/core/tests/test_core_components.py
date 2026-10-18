@@ -2,9 +2,13 @@ import numpy as np
 import pytest
 import torch
 import torch.nn as nn
-
 from diffusion_omni.core.codecs import TextCodec
-from diffusion_omni.core.config import SamplingConfig, apply_overrides, from_dict, load_config
+from diffusion_omni.core.config import (
+    SamplingConfig,
+    apply_overrides,
+    from_dict,
+    load_config,
+)
 from diffusion_omni.core.nn.adapters import ImagePatchAdapter, VideoPatchAdapter
 from diffusion_omni.core.nn.lora import apply_lora, lora_disabled, merged_state_dict
 from diffusion_omni.core.registry import Registry

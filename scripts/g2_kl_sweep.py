@@ -19,7 +19,6 @@ from collections import defaultdict
 from pathlib import Path
 
 import numpy as np
-
 from diffusion_omni.core.config import load_config
 from diffusion_omni.core.registry import discover_plugins
 from diffusion_omni.posttrain.rl.trainer import RLTrainer

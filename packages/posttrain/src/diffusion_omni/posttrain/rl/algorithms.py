@@ -10,7 +10,6 @@ from dataclasses import dataclass
 
 import numpy as np
 import torch
-
 from diffusion_omni.core.registry import ALGORITHMS
 
 

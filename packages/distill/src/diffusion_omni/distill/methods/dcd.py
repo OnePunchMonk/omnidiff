@@ -4,7 +4,6 @@ import copy
 
 import torch
 import torch.nn.functional as F
-
 from diffusion_omni.core.registry import DISTILLERS
 
 from .base import Distiller

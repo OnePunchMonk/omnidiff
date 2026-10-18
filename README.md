@@ -4,6 +4,8 @@ A diffusion monorepo for text, image and video, written in PyTorch and NumPy. It
 
 `diffusion-omni-core` depends only on `torch`, `numpy` and `pyyaml`.
 
+Scope: [docs/scope/HARD_SCOPE.md](docs/scope/HARD_SCOPE.md)
+
 ## Status
 
 | package | what is on `main` | status |
@@ -52,7 +54,7 @@ examples/     custom_plugin.py: registering your own components
 scripts/      toy report and diagnostic scripts; check_docs.py
 ```
 
-Each package is a separate distribution under the `diffusion-omni.*` namespace. A package plugs in through two entry-point groups: `diffusion_omni.plugins` imports its components so their registrations run, and `diffusion_omni.commands` adds CLI subcommands. Installing a package is enough to make its components usable from config.
+Each package is a separate distribution under the `diffusion_omni.*` namespace. A package plugs in through two entry-point groups: `diffusion_omni.plugins` imports its components so their registrations run, and `diffusion_omni.commands` adds CLI subcommands. Installing a package is enough to make its components usable from config.
 
 Inside `diffusion_omni.core`:
 

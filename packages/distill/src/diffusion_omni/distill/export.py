@@ -9,7 +9,6 @@ import shutil
 from pathlib import Path
 
 import torch
-
 from diffusion_omni.core.config import load_config
 from diffusion_omni.core.pipeline import Pipeline
 from diffusion_omni.core.utils import CONFIG, load_weights

@@ -5,7 +5,6 @@ import json
 from pathlib import Path
 
 import pytest
-
 from diffusion_omni.core.testing import tiny_config
 from diffusion_omni.posttrain import SFTTrainer
 
