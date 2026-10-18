@@ -20,10 +20,10 @@ from pathlib import Path
 
 import numpy as np
 
-from omnidiff.core.config import load_config
-from omnidiff.core.registry import discover_plugins
-from omnidiff.posttrain.rl.trainer import RLTrainer
-from omnidiff.reward.scorecard import run_scorecard
+from diffusion_omni.core.config import load_config
+from diffusion_omni.core.registry import discover_plugins
+from diffusion_omni.posttrain.rl.trainer import RLTrainer
+from diffusion_omni.reward.scorecard import run_scorecard
 
 TEACHER = "runs/image_flow_grpo/sft/final"
 STUDENT = "runs/distill/image_flow_dmd2/distill/final"

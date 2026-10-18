@@ -6,8 +6,8 @@ from pathlib import Path
 
 import pytest
 
-from omnidiff.core.testing import tiny_config
-from omnidiff.posttrain import SFTTrainer
+from diffusion_omni.core.testing import tiny_config
+from diffusion_omni.posttrain import SFTTrainer
 
 ROOT = Path(__file__).resolve().parents[3]
 TINY_STUDENT = ["distill.steps=2", "distill.pool_size=8", "distill.batch_size=4", "distill.eval_every=100"]

@@ -3,10 +3,10 @@
 import numpy as np
 import torch
 
-from omnidiff.core import Pipeline, step
-from omnidiff.core.testing import tiny_config
-from omnidiff.posttrain import RLTrainer, SFTTrainer
-from omnidiff.posttrain.rl.algorithms import compute_advantages
+from diffusion_omni.core import Pipeline, step
+from diffusion_omni.core.testing import tiny_config
+from diffusion_omni.posttrain import RLTrainer, SFTTrainer
+from diffusion_omni.posttrain.rl.algorithms import compute_advantages
 
 
 def test_sft_loss_is_finite(config_path, tmp_path):

@@ -2,7 +2,7 @@ import math
 
 import numpy as np
 
-from omnidiff.reward.aggregate import aggregate, to_markdown
+from diffusion_omni.reward.aggregate import aggregate, to_markdown
 
 
 def _rows():

@@ -3,7 +3,7 @@
 seed: 0
 device: auto
 output_dir: runs/distill/image_ddpm_kd
-teacher: runs/image_ddpm_ddpo/sft/final     # produced by: omnidiff sft -c configs/image_ddpm_ddpo.yaml
+teacher: runs/image_ddpm_ddpo/sft/final     # produced by: diffusion-omni sft -c configs/image_ddpm_ddpo.yaml
 
 distill:
   method: {type: kd}

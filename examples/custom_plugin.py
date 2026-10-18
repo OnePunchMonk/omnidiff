@@ -9,7 +9,7 @@ Anything importable also works without registering: ``type: my_pkg.mod:MyClass``
 import numpy as np
 import torch.nn as nn
 
-from omnidiff.core.registry import CONDITIONERS, REWARDS
+from diffusion_omni.core.registry import CONDITIONERS, REWARDS
 
 
 @REWARDS.register("centered_blob")

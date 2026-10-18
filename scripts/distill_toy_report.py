@@ -1,8 +1,8 @@
 """Score every toy distillation run against its teacher and write docs/results/distillation_toy.md.
 
 Prerequisites (CPU, minutes each):
-    uv run omnidiff sft -c configs/<teacher>.yaml           for the four teachers
-    uv run omnidiff distill -c configs/distill/<name>.yaml  for each student below
+    uv run diffusion-omni sft -c configs/<teacher>.yaml           for the four teachers
+    uv run diffusion-omni distill -c configs/distill/<name>.yaml  for each student below
 Usage:
     uv run python scripts/distill_toy_report.py [-n 512]
 
@@ -25,12 +25,12 @@ import argparse
 import json
 from pathlib import Path
 
-from omnidiff.core.config import from_dict, load_config
-from omnidiff.core.registry import DISTILLERS, discover_plugins
-from omnidiff.distill.trainer import DistillConfig, DistillTrainer
-from omnidiff.reward.aggregate import aggregate
-from omnidiff.reward.aggregate import to_markdown as agg_markdown
-from omnidiff.reward.scorecard import run_scorecard, save, to_markdown
+from diffusion_omni.core.config import from_dict, load_config
+from diffusion_omni.core.registry import DISTILLERS, discover_plugins
+from diffusion_omni.distill.trainer import DistillConfig, DistillTrainer
+from diffusion_omni.reward.aggregate import aggregate
+from diffusion_omni.reward.aggregate import to_markdown as agg_markdown
+from diffusion_omni.reward.scorecard import run_scorecard, save, to_markdown
 
 GROUPS = {
     "image_flow_grpo": ["image_flow_kd", "image_flow_consistency", "image_flow_flow_map", "image_flow_dmd2",
@@ -108,7 +108,7 @@ def student_cfg(name: str, teacher: Path, seed: int, out: Path, extra: list[str]
 def method_sources(cfg: dict) -> list[Path]:
     import inspect
 
-    import omnidiff.distill.trainer as trainer
+    import diffusion_omni.distill.trainer as trainer
 
     method = DISTILLERS.get(cfg["distill"]["method"]["type"])
     return [Path(inspect.getsourcefile(method)), Path(inspect.getsourcefile(trainer))]

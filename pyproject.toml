@@ -1,9 +1,9 @@
 # uv workspace root. `uv sync` installs every package under packages/ in editable mode.
 [project]
-name = "omnidiff-workspace"
+name = "diffusion-omni-workspace"
 version = "0.0.0"
 requires-python = ">=3.10"
-dependencies = ["omnidiff-core", "omnidiff-data", "omnidiff-reward", "omnidiff-posttrain", "omnidiff-distill"]
+dependencies = ["diffusion-omni-core", "diffusion-omni-data", "diffusion-omni-reward", "diffusion-omni-posttrain", "diffusion-omni-distill"]
 
 [dependency-groups]
 dev = ["pytest>=8", "safetensors"]
@@ -15,11 +15,11 @@ package = false
 members = ["packages/*"]
 
 [tool.uv.sources]
-omnidiff-core = { workspace = true }
-omnidiff-data = { workspace = true }
-omnidiff-reward = { workspace = true }
-omnidiff-posttrain = { workspace = true }
-omnidiff-distill = { workspace = true }
+diffusion-omni-core = { workspace = true }
+diffusion-omni-data = { workspace = true }
+diffusion-omni-reward = { workspace = true }
+diffusion-omni-posttrain = { workspace = true }
+diffusion-omni-distill = { workspace = true }
 
 [tool.pytest.ini_options]
 testpaths = ["packages"]

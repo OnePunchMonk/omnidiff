@@ -3,10 +3,10 @@ from pathlib import Path
 import pytest
 import torch
 
-from omnidiff.core.config import load_config
-from omnidiff.core.testing import tiny_config
-from omnidiff.distill import DistillTrainer
-from omnidiff.posttrain import SFTTrainer
+from diffusion_omni.core.config import load_config
+from diffusion_omni.core.testing import tiny_config
+from diffusion_omni.distill import DistillTrainer
+from diffusion_omni.posttrain import SFTTrainer
 
 ROOT = Path(__file__).resolve().parents[3]
 TINY = ["distill.steps=2", "distill.batch_size=4", "distill.pool_size=8", "distill.teacher_steps=4",

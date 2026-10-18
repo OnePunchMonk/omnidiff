@@ -4,12 +4,12 @@ import pytest
 import torch
 from torch.func import jvp
 
-from omnidiff.core.nn.denoiser import build_model
-from omnidiff.core.nn.layers import math_attention
-from omnidiff.core.processes.flow import FlowMatching
-from omnidiff.core.processes.gaussian import GaussianDiffusion
-from omnidiff.core.processes.masked import MaskedDiffusion
-from omnidiff.core.sampling import predict, sample
+from diffusion_omni.core.nn.denoiser import build_model
+from diffusion_omni.core.nn.layers import math_attention
+from diffusion_omni.core.processes.flow import FlowMatching
+from diffusion_omni.core.processes.gaussian import GaussianDiffusion
+from diffusion_omni.core.processes.masked import MaskedDiffusion
+from diffusion_omni.core.sampling import predict, sample
 
 
 def _image_model(two_time=False, num_classes=3, **kw):

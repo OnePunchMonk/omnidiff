@@ -2,7 +2,7 @@
 seed: 0
 device: auto
 output_dir: runs/distill/video_flow_kd
-teacher: runs/video_flow_grpo/sft/final     # produced by: omnidiff sft -c configs/video_flow_grpo.yaml
+teacher: runs/video_flow_grpo/sft/final     # produced by: diffusion-omni sft -c configs/video_flow_grpo.yaml
 
 distill:
   method: {type: kd}

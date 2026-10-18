@@ -2,7 +2,7 @@
 seed: 0
 device: auto
 output_dir: runs/distill/image_flow_dmd2_gan
-teacher: runs/image_flow_grpo/sft/final     # produced by: omnidiff sft -c configs/image_flow_grpo.yaml
+teacher: runs/image_flow_grpo/sft/final     # produced by: diffusion-omni sft -c configs/image_flow_grpo.yaml
 
 distill:
   method: {type: dmd2, fake_updates: 5, gan_weight: 0.01, last_stage_prob: 0.5}

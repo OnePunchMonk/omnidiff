@@ -1,16 +1,16 @@
-# omnidiff-distill
+# diffusion-omni-distill
 
-Few-step distillation for text, image and video diffusion, built on `omnidiff-core`. The scope and the method landscape are in [docs/scope/distillation.md](../../docs/scope/distillation.md).
+Few-step distillation for text, image and video diffusion, built on `diffusion-omni-core`. The scope and the method landscape are in [docs/scope/distillation.md](../../docs/scope/distillation.md).
 
 ```bash
-uv run omnidiff sft     -c configs/image_flow_grpo.yaml                 # teacher
-uv run omnidiff distill -c configs/distill/image_flow_dmd2.yaml         # 4-step student
-uv run omnidiff scorecard --ref runs/image_flow_grpo/sft/final \
+uv run diffusion-omni sft     -c configs/image_flow_grpo.yaml                 # teacher
+uv run diffusion-omni distill -c configs/distill/image_flow_dmd2.yaml         # 4-step student
+uv run diffusion-omni scorecard --ref runs/image_flow_grpo/sft/final \
     --ckpt dmd2=runs/distill/image_flow_dmd2/distill/final --nfe 1 2 4 8 --out runs/scorecard
-uv run omnidiff sample --ckpt runs/distill/image_flow_dmd2/distill/final --prompt 0 --prompt 1
+uv run diffusion-omni sample --ckpt runs/distill/image_flow_dmd2/distill/final --prompt 0 --prompt 1
 ```
 
-The student checkpoint is a normal omnidiff checkpoint. Its config carries the sampler and timestep grid it was trained for, so `Pipeline`, `sample`, `rl` and `scorecard` all use it unchanged.
+The student checkpoint is a normal diffusion-omni checkpoint. Its config carries the sampler and timestep grid it was trained for, so `Pipeline`, `sample`, `rl` and `scorecard` all use it unchanged.
 
 ## Methods
 
@@ -36,10 +36,10 @@ The student checkpoint is a normal omnidiff checkpoint. Its config carries the s
 
 ## Few-step students are RL-able
 
-The `renoise` sampler (predict x0, then re-noise to the next time) is a Gaussian policy with exact log-probs. DMD2 and consistency students can therefore be RL-tuned with `omnidiff rl` straight from their checkpoint:
+The `renoise` sampler (predict x0, then re-noise to the next time) is a Gaussian policy with exact log-probs. DMD2 and consistency students can therefore be RL-tuned with `diffusion-omni rl` straight from their checkpoint:
 
 ```bash
-uv run omnidiff rl -c runs/distill/image_flow_dmd2/distill/final/config.yaml \
+uv run diffusion-omni rl -c runs/distill/image_flow_dmd2/distill/final/config.yaml \
     rl.init_from=runs/distill/image_flow_dmd2/distill/final output_dir=runs/rl_on_student
 ```
 
@@ -60,4 +60,9 @@ uv run omnidiff rl -c runs/distill/image_flow_dmd2/distill/final/config.yaml \
 
 ## Adding a method
 
-Subclass `omnidiff.distill.methods.base.Distiller` and register it under `DISTILLERS`. Then declare `processes`, the default `sampler`, `two_time`, and implement `loss(role, tr)`, plus `setup` / `schedule` / `after_update` if needed. Use the trainer helpers `teacher_pred`, `student_pred`, `student_rollout`, `prompt_cond` and `data.batch`.
+Subclass `diffusion_omni.distill.methods.base.Distiller` and register it under `DISTILLERS`. Then declare `processes`, the default `sampler`, `two_time`, and implement `loss(role, tr)`, plus `setup` / `schedule` / `after_update` if needed. Use the trainer helpers `teacher_pred`, `student_pred`, `student_rollout`, `prompt_cond` and `data.batch`.
+
+## Reference and guides
+
+- Reference page: [docs/reference/distill.md](../../docs/reference/distill.md), with the method kwargs, every `distill.*` key and the export format.
+- Guides: [distill](../../docs/guides/distill.md), [export](../../docs/guides/export.md), [eval-scorecard](../../docs/guides/eval-scorecard.md).

@@ -2,7 +2,7 @@
 seed: 0
 device: auto
 output_dir: runs/distill/text_masked_kd
-teacher: runs/text_masked_grpo/sft/final     # produced by: omnidiff sft -c configs/text_masked_grpo.yaml
+teacher: runs/text_masked_grpo/sft/final     # produced by: diffusion-omni sft -c configs/text_masked_grpo.yaml
 
 distill:
   method: {type: kd}

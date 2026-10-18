@@ -3,12 +3,12 @@ import pytest
 import torch
 import torch.nn as nn
 
-from omnidiff.core.codecs import TextCodec
-from omnidiff.core.config import SamplingConfig, apply_overrides, from_dict, load_config
-from omnidiff.core.nn.adapters import ImagePatchAdapter, VideoPatchAdapter
-from omnidiff.core.nn.lora import apply_lora, lora_disabled, merged_state_dict
-from omnidiff.core.registry import Registry
-from omnidiff.core.utils import to_grid, write_png
+from diffusion_omni.core.codecs import TextCodec
+from diffusion_omni.core.config import SamplingConfig, apply_overrides, from_dict, load_config
+from diffusion_omni.core.nn.adapters import ImagePatchAdapter, VideoPatchAdapter
+from diffusion_omni.core.nn.lora import apply_lora, lora_disabled, merged_state_dict
+from diffusion_omni.core.registry import Registry
+from diffusion_omni.core.utils import to_grid, write_png
 
 
 def test_registry_build_context_and_dotted_paths():

@@ -6,12 +6,12 @@ import numpy as np
 import pytest
 import torch
 
-from omnidiff.core import Pipeline
-from omnidiff.core.config import load_config, save_config
-from omnidiff.core.testing import tiny_config
-from omnidiff.distill import DistillTrainer
-from omnidiff.distill.export import SAMPLER_REQUIRED, export_bundle, load_bundle
-from omnidiff.posttrain import SFTTrainer
+from diffusion_omni.core import Pipeline
+from diffusion_omni.core.config import load_config, save_config
+from diffusion_omni.core.testing import tiny_config
+from diffusion_omni.distill import DistillTrainer
+from diffusion_omni.distill.export import SAMPLER_REQUIRED, export_bundle, load_bundle
+from diffusion_omni.posttrain import SFTTrainer
 
 ROOT = Path(__file__).resolve().parents[3]
 TINY_DISTILL = ["distill.steps=2", "distill.batch_size=4", "distill.pool_size=8", "distill.teacher_steps=4",
@@ -46,7 +46,7 @@ def test_bundle_round_trip_is_bit_identical(name, safetensors, teachers, tmp_pat
     if safetensors:
         pytest.importorskip("safetensors")
     else:
-        monkeypatch.setattr("omnidiff.distill.export._safetensors", lambda: None)
+        monkeypatch.setattr("diffusion_omni.distill.export._safetensors", lambda: None)
     cfg = distill_config(ROOT / "configs" / "distill" / f"{name}.yaml", teachers, tmp_path)
     ckpt = DistillTrainer(cfg).train()
     ref = Pipeline.from_checkpoint(ckpt, device="cpu")
@@ -76,7 +76,7 @@ def _student(teachers, tmp_path, name="image_flow_kd"):
 
 
 def test_cli_export_loads_and_matches(teachers, tmp_path):
-    from omnidiff.core.cli import main
+    from diffusion_omni.core.cli import main
 
     ckpt = _student(teachers, tmp_path)
     main(["export", "--ckpt", str(ckpt), "--out", str(tmp_path / "b")])
@@ -104,7 +104,7 @@ def test_re_export_does_not_load_stale_weights(teachers, tmp_path, monkeypatch):
     a, b = teachers("image_flow_grpo"), _student(teachers, tmp_path)
     out = tmp_path / "bundle"
     export_bundle(a, out)
-    monkeypatch.setattr("omnidiff.distill.export._safetensors", lambda: None)
+    monkeypatch.setattr("diffusion_omni.distill.export._safetensors", lambda: None)
     export_bundle(b, out)
     monkeypatch.undo()
     assert not (out / "model.safetensors").exists()

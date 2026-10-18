@@ -3,20 +3,20 @@ requires = ["hatchling>=1.24"]
 build-backend = "hatchling.build"
 
 [project]
-name = "omnidiff-distill"
+name = "diffusion-omni-distill"
 version = "0.1.0"
 description = "Few-step distillation: KD, DMD2, consistency, flow maps and SDTT for text, image and video diffusion."
 requires-python = ">=3.10"
-dependencies = ["omnidiff-core", "omnidiff-data", "omnidiff-reward"]
+dependencies = ["diffusion-omni-core", "diffusion-omni-data", "diffusion-omni-reward"]
 
 [project.optional-dependencies]
 export = ["safetensors"]
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/omnidiff"]
+packages = ["src/diffusion_omni"]
 
-[project.entry-points."omnidiff.plugins"]
-distill = "omnidiff.distill"
+[project.entry-points."diffusion_omni.plugins"]
+distill = "diffusion_omni.distill"
 
-[project.entry-points."omnidiff.commands"]
-distill = "omnidiff.distill.cli:register"
+[project.entry-points."diffusion_omni.commands"]
+distill = "diffusion_omni.distill.cli:register"

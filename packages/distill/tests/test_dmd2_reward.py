@@ -4,12 +4,12 @@ import numpy as np
 import pytest
 import torch
 
-from omnidiff.core.config import load_config
-from omnidiff.core.registry import REWARDS
-from omnidiff.core.testing import tiny_config
-from omnidiff.distill import DistillTrainer
-from omnidiff.posttrain import SFTTrainer
-from omnidiff.reward import rewards  # noqa: F401
+from diffusion_omni.core.config import load_config
+from diffusion_omni.core.registry import REWARDS
+from diffusion_omni.core.testing import tiny_config
+from diffusion_omni.distill import DistillTrainer
+from diffusion_omni.posttrain import SFTTrainer
+from diffusion_omni.reward import rewards  # noqa: F401
 
 ROOT = Path(__file__).resolve().parents[3]
 TINY = ["device=cpu", "distill.steps=2", "distill.batch_size=4", "distill.pool_size=8", "distill.teacher_steps=4"]
@@ -114,7 +114,7 @@ def test_zero_reward_weight_student_loss_equals_dmd2(mode, teacher, tmp_path):
     """At the loss("student") level: same prompts, same rng consumption, same loss."""
     import copy
 
-    from omnidiff.distill.methods.dmd2 import DMD2
+    from diffusion_omni.distill.methods.dmd2 import DMD2
     tr = _trainer(teacher, tmp_path, f"distill.method.mode={mode}", "distill.method.reward_weight=0")
     m = tr.method
     rng, gen = copy.deepcopy(tr.rng), tr.gen.get_state()

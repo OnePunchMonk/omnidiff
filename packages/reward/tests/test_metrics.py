@@ -2,10 +2,10 @@ from pathlib import Path
 
 import numpy as np
 
-from omnidiff.core.testing import tiny_config
-from omnidiff.posttrain import SFTTrainer
-from omnidiff.reward.metrics import frechet_distance, precision_recall, within_prompt_diversity
-from omnidiff.reward.scorecard import run_scorecard, to_markdown
+from diffusion_omni.core.testing import tiny_config
+from diffusion_omni.posttrain import SFTTrainer
+from diffusion_omni.reward.metrics import frechet_distance, precision_recall, within_prompt_diversity
+from diffusion_omni.reward.scorecard import run_scorecard, to_markdown
 
 ROOT = Path(__file__).resolve().parents[3]
 

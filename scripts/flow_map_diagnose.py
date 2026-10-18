@@ -18,11 +18,11 @@ import argparse
 import numpy as np
 import torch
 
-from omnidiff.core.config import load_config
-from omnidiff.core.pipeline import Pipeline
-from omnidiff.core.registry import discover_plugins
-from omnidiff.core.processes.base import bcast
-from omnidiff.core.sampling import predict, sample
+from diffusion_omni.core.config import load_config
+from diffusion_omni.core.pipeline import Pipeline
+from diffusion_omni.core.registry import discover_plugins
+from diffusion_omni.core.processes.base import bcast
+from diffusion_omni.core.sampling import predict, sample
 
 GAPS = [(0.0, 0.1), (0.1, 0.25), (0.25, 0.5), (0.5, 1.0)]
 

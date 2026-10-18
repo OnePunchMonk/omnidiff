@@ -3,14 +3,15 @@ requires = ["hatchling>=1.24"]
 build-backend = "hatchling.build"
 
 [project]
-name = "omnidiff-core"
+name = "diffusion-omni-core"
 version = "0.1.0"
 description = "Diffusion processes (masked, Gaussian, flow), modality adapters, DiT, sampling and inference. PyTorch + NumPy only."
 requires-python = ">=3.10"
 dependencies = ["torch>=2.2", "numpy>=1.24", "pyyaml>=6"]
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/omnidiff"]
+packages = ["src/diffusion_omni"]
 
 [project.scripts]
-omnidiff = "omnidiff.core.cli:main"
+diffusion-omni = "diffusion_omni.core.cli:main"
+domni = "diffusion_omni.core.cli:main"

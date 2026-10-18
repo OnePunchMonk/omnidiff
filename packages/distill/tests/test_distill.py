@@ -7,13 +7,13 @@ import numpy as np
 import pytest
 import torch
 
-from omnidiff.core import Pipeline, sample
-from omnidiff.core.config import load_config
-from omnidiff.core.sampling import step
-from omnidiff.core.testing import tiny_config
-from omnidiff.distill import DistillTrainer
-from omnidiff.distill.trainer import EMA
-from omnidiff.posttrain import SFTTrainer
+from diffusion_omni.core import Pipeline, sample
+from diffusion_omni.core.config import load_config
+from diffusion_omni.core.sampling import step
+from diffusion_omni.core.testing import tiny_config
+from diffusion_omni.distill import DistillTrainer
+from diffusion_omni.distill.trainer import EMA
+from diffusion_omni.posttrain import SFTTrainer
 
 ROOT = Path(__file__).resolve().parents[3]
 DISTILL_CONFIGS = sorted((ROOT / "configs" / "distill").glob("*.yaml"))
@@ -87,7 +87,7 @@ def test_dmd2_generator_gradient_is_the_score_difference(teachers, tmp_path):
 def test_dmd2_backward_simulation_states_lie_on_the_student_grid(teachers, tmp_path):
     """The generator is fed the student's own rollout state at grid[k], evaluated at t = grid[k], for every
     k < K (never the final grid point), so training sees the states the trained grid meets at inference."""
-    from omnidiff.core.sampling import step
+    from diffusion_omni.core.sampling import step
 
     tr = _trainer(teachers, tmp_path, "image_flow_dmd2", "distill.student_steps=4")
     m, calls = tr.method, []
@@ -151,7 +151,7 @@ def test_dmd2_fake_and_generator_updates_share_the_stage_distribution(teachers, 
 
 @pytest.mark.parametrize("p", [-0.1, 1.5, float("nan")])
 def test_dmd2_last_stage_prob_is_validated(p):
-    from omnidiff.distill.methods.dmd2 import DMD2
+    from diffusion_omni.distill.methods.dmd2 import DMD2
 
     with pytest.raises(ValueError):
         DMD2(last_stage_prob=p)
@@ -372,7 +372,7 @@ def test_resume_builds_teacher_pool_from_saved_tensors(teachers, tmp_path):
     state = split.save_state(split.out_dir / "state")
     resumed_cfg = distill_config(ROOT / "configs" / "distill" / "image_flow_kd.yaml", teachers,
                                   tmp_path / "split", *extra, f"distill.resume_from={state}")
-    with patch("omnidiff.distill.trainer.TeacherPool._generate", side_effect=AssertionError("pool regenerated")):
+    with patch("diffusion_omni.distill.trainer.TeacherPool._generate", side_effect=AssertionError("pool regenerated")):
         resumed = DistillTrainer(resumed_cfg)
     assert torch.equal(resumed.data.states, split.data.states)
 
@@ -392,8 +392,8 @@ def test_ema_swap_restores_weights():
 def test_renoise_student_is_rl_tunable(teachers, tmp_path):
     """A few-step student exported with the renoise sampler is a policy with exact log-probs:
     posttrain's RL trainer runs on it unchanged, and a fresh rollout is on-policy."""
-    from omnidiff.core.sampling import step
-    from omnidiff.posttrain import RLTrainer
+    from diffusion_omni.core.sampling import step
+    from diffusion_omni.posttrain import RLTrainer
 
     ckpt = _trainer(teachers, tmp_path, "image_flow_dmd2").train()
     cfg = load_config(ckpt / "config.yaml", ["device=cpu", f"output_dir={tmp_path}/rl", f"rl.init_from={ckpt}",

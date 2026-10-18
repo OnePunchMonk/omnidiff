@@ -3,17 +3,17 @@ requires = ["hatchling>=1.24"]
 build-backend = "hatchling.build"
 
 [project]
-name = "omnidiff-reward"
+name = "diffusion-omni-reward"
 version = "0.1.0"
 description = "Reward functions and (planned) the reward/eval harness."
 requires-python = ">=3.10"
-dependencies = ["omnidiff-core", "omnidiff-data"]
+dependencies = ["diffusion-omni-core", "diffusion-omni-data"]
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/omnidiff"]
+packages = ["src/diffusion_omni"]
 
-[project.entry-points."omnidiff.plugins"]
-reward = "omnidiff.reward"
+[project.entry-points."diffusion_omni.plugins"]
+reward = "diffusion_omni.reward"
 
-[project.entry-points."omnidiff.commands"]
-reward = "omnidiff.reward.cli:register"
+[project.entry-points."diffusion_omni.commands"]
+reward = "diffusion_omni.reward.cli:register"
