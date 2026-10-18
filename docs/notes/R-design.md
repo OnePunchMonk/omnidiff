@@ -15,9 +15,9 @@ This document fixes the contracts for parallel R1–R4 implementation. No workst
 
 ### Ownership
 
-- `packages/reward/src/omnidiff/reward/service.py`
-- `packages/reward/src/omnidiff/reward/client.py`
-- `packages/reward/src/omnidiff/reward/service_cli.py`
+- `packages/reward/src/diffusion_omni/reward/service.py`
+- `packages/reward/src/diffusion_omni/reward/client.py`
+- `packages/reward/src/diffusion_omni/reward/service_cli.py`
 - `packages/reward/tests/test_service.py`
 - One registration in the existing reward CLI integration, owned by R4.
 
@@ -81,7 +81,7 @@ Success response:
 
 ```json
 {
-  "schema_version": "omnidiff.reward/v1",
+  "schema_version": "diffusion_omni.reward/v1",
   "request_id": "optional-string",
   "scores": [0.25, 0.5],
   "batch_size": 2
@@ -144,7 +144,7 @@ class RewardClient:
 
 ### Ownership
 
-- `packages/reward/src/omnidiff/reward/miles.py`
+- `packages/reward/src/diffusion_omni/reward/miles.py`
 - `packages/reward/tests/test_miles.py`
 - `docs/notes/R2.md`
 
@@ -160,7 +160,7 @@ See [`customization.md`](https://github.com/radixark/miles_diffusion/blob/main/d
 Required adapter:
 
 ```python
-async def omnidiff_rm(
+async def diffusion_omni_rm(
     args,
     samples: list,
     **kwargs,
@@ -170,7 +170,7 @@ async def omnidiff_rm(
 
 Behavior:
 
-- Read the reward spec from `args.omnidiff_reward_spec` or `args.custom_rm_args`.
+- Read the reward spec from `args.diffusion_omni_reward_spec` or `args.custom_rm_args`.
 - Read the service URL from `args.rm_url`.
 - Extract prompts from `sample.prompt`.
 - Convert `sample.generated_output` to the service’s text or `.npy` representation.
@@ -185,7 +185,7 @@ Behavior:
 
 ### Ownership
 
-- `packages/reward/src/omnidiff/reward/reliability.py`
+- `packages/reward/src/diffusion_omni/reward/reliability.py`
 - `packages/reward/scripts/reward_reliability.py`
 - `packages/reward/tests/test_reliability.py`
 - `docs/notes/R3.md`
@@ -235,10 +235,10 @@ The script accepts JSON/JSONL inputs, runs agreement and reward-hacking comparis
 
 ### Ownership
 
-- `packages/reward/src/omnidiff/reward/eval.py`
+- `packages/reward/src/diffusion_omni/reward/eval.py`
 - `packages/reward/tests/test_eval.py`
-- `packages/reward/src/omnidiff/reward/cli.py`
-- `packages/core/src/omnidiff/core/registry.py`
+- `packages/reward/src/diffusion_omni/reward/cli.py`
+- `packages/core/src/diffusion_omni/core/registry.py`
 - One-line import/registration for R1’s `service_cli.py`.
 
 Add:
@@ -257,7 +257,7 @@ class EvalSuite(Protocol):
         ...
 ```
 
-`omnidiff eval` arguments:
+`diffusion-omni eval` arguments:
 
 ```text
 --suite NAME
@@ -275,7 +275,7 @@ Output schema:
 
 ```json
 {
-  "schema_version": "omnidiff.eval/v1",
+  "schema_version": "diffusion_omni.eval/v1",
   "suite": "scorecard",
   "seeds": [0, 1, 2],
   "config": {"n": 256, "device": "cpu"},
@@ -309,5 +309,5 @@ Unknown suites, malformed checkpoint assignments, and empty seed lists fail with
 | R3 | `reliability.py`, script, tests, notes | none |
 | R4 | `eval.py`, eval tests, `cli.py`, `registry.py` | one R1 CLI registration |
 
-No workstream edits `pyproject.toml`; the existing `omnidiff.commands` entry point remains the integration point.
+No workstream edits `pyproject.toml`; the existing `diffusion_omni.commands` entry point remains the integration point.
 

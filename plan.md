@@ -1,87 +1,123 @@
-# Build plan to Friday 2026-10-23
+# Build plan to Saturday 2026-10-31
 
-Tracking: [goals and plan, #2](https://github.com/OnePunchMonk/omnidiff/issues/2) and [benchmark runs, #3](https://github.com/OnePunchMonk/omnidiff/issues/3).
+Tracking: [goals and plan, #2](https://github.com/OnePunchMonk/diffusion-omni/issues/2) and [experiment runs, #3](https://github.com/OnePunchMonk/diffusion-omni/issues/3). How agents run, review and merge: [docs/plan/EXECUTION.md](docs/plan/EXECUTION.md). Runs and CPU-hour estimates: [docs/plan/BENCHMARK_RUNS.md](docs/plan/BENCHMARK_RUNS.md). Proposed rename to `diffusion-omni`: [docs/plan/RENAME.md](docs/plan/RENAME.md).
 
-Two layers ship by Friday: **distillation complete** (milestones M1 and M2 in [docs/GOAL_AND_PLAN.md](docs/GOAL_AND_PLAN.md), plus the CPU half of Phase E), then **the reward and eval harness** (M3). Phase D, the real-scale reproduction, is out of this window: it needs GPU time and a cost estimate first.
+The previous plan (distillation, then the reward harness, by Fri 23) is done for distillation and half done for reward. This plan covers what is left and every layer in the [layer map](docs/GOAL_AND_PLAN.md#layer-map), so that by the 31st each layer is either a working, tested v0 package or explicitly deferred with a reason.
 
-## Definition of done
+## Where things stand (2026-10-18)
 
-**Distillation** is done when every exit criterion for Phases A–C in [scope §5](docs/scope/distillation.md#5-phases-and-exit-criteria) is met and written up. That means:
-- every method in scope §4 is implemented with a correctness test;
-- the open issues in [docs/results/distillation_toy.md](docs/results/distillation_toy.md#open-issues) are closed or recorded as negative results;
-- the headline tables are reported over 3 seeds;
-- a distilled student exports to a documented, framework-neutral format.
+- `main` at `9fe1202`, pushed, 165 tests passing (`uv run pytest -q`, about 7 s on CPU).
+- Distillation merged: `kd`, `dmd2` (+ `last_stage_prob`), `dmd2_reward`, `consistency`, `flow_map`, `rcm`, `progressive`, `sdtt`, `coupled_kd`, `dcd` (single-mask ablation, negative); `diffusion-omni export` bundles; the multi-seed harness `scripts/distill_toy_report.py` with provenance; exact save and resume (D7); `docs/ARCHITECTURE.md`; a config for every method on every process it supports.
+- Reward wave, not merged, open findings from the Codex review:
+  - `ws/R1` (`6d019c8`), batched reward service: remote code execution through `--allow-override`, because an override `reward` spec can name any `module:object`; request validation gaps; a flaky timing test.
+  - `ws/R2` (`841c63e`), miles-diffusion adapter: a single-frame video is classified as an image; bfloat16 outputs fail; an empty prompt becomes `None`.
+  - `ws/R4` (`c0c8094`), `diffusion-omni eval`: NaN is written into the JSON; duplicate seeds and invalid `-n` / `--nfe` are accepted.
+  - `ws/R3`, reliability study: no commits. Its worktree (`.claude/worktrees/agent-a4d78f7d54c6f83fe`) holds uncommitted `reliability.py`, `scripts/reward_reliability.py`, `test_reliability.py`, and an edit to `packages/data/.../datasets.py`, which R3 does not own.
+- The `time_scale: 10` video teacher is trained: `runs/video_flow_ts10/sft/final` (8000 steps, 481 s, 2026-10-18 00:17). It has not been scored yet.
+- Not run: the 3-seed distillation report, the ts10 3-seed report, the D2 advantage-mode run, the order study on the ts10 teacher, R3 and R1 measurements. A 3-seed report was started and stopped at `image_flow_consistency_s0`. Its four `_s*` run dirs predate the D7 trainer change, so the harness will likely flag them as stale.
+- README is stale: it omits `progressive`, `dcd`, `dmd2_reward`, `export` and `ARCHITECTURE.md`, and points to `tests/test_e2e.py`, which is now `packages/posttrain/tests/test_posttrain_e2e.py`.
 
-**Reward** is done when:
-- rewards can be served in batches over a stable API;
-- a miles-diffusion adapter exists, written against miles' actual reward interface;
-- a reliability study (agreement and hacking probes) has a written toy result;
-- the scorecard runs as a general `omnidiff eval`.
+## What "the entire monorepo done" means on the 31st
 
-## How the work runs
+Each layer below either meets its exit criterion on `main`, with `uv run pytest -q` green, or is recorded as deferred in `docs/GOAL_AND_PLAN.md` with the reason. "v0" means one capability that works end to end on CPU toys, with a test of the property that makes it correct. It is not feature parity with the frameworks named in the layer map.
 
-| role | model | what it does |
-|---|---|---|
-| implementer | Sonnet, low effort | one workstream per agent, in its own git worktree and branch (`ws/<id>`); writes code, tests and a notes file; commits and never pushes |
-| reviewer | Opus, medium effort | reviews each branch's diff against this plan and the repo principles; writes findings ranked by severity |
-| second reviewer, designer, implementer | Codex (`gpt-5.6-luna`) | an independent review of each branch; design critiques and interface specs; some coding workstreams (C1, ARCH, D7) |
-| implementer (again) | the same Sonnet agent | patches every finding, or replies with a reason for not doing so |
-| integrator | Haiku, low effort | merges reviewed branches into `main` in the order below, runs the full test suite, pushes; stops and reports on any conflict or failure |
-| orchestrator | this session | writes the plan, starts the agents, resolves conflicts, runs long CPU experiments, writes `docs/results` |
-
-Rules for every agent:
-- Commit as `git -c user.name=OnePunchMonk -c user.email=aggarwal.avaya@yahoo.com commit ...`, with no co-author trailers and no session links.
-- CPU only; no GPU runs.
-- `uv run pytest -q` must pass before every commit. A new method or component ships with a test of the property that makes it correct (GOAL_AND_PLAN principle 1).
-- Stay inside the files your workstream owns. Shared files (`methods/__init__.py`, `pyproject.toml` entry points) get one-line additions only.
-- Do not edit `README.md`, `docs/results/` or `docs/scope/`. Put findings in `docs/notes/<id>.md`; the orchestrator folds them into the docs.
-- Match the existing code style: same comment density, docstrings that explain *why*, registries and context injection, toy configs in `configs/`.
-- Teachers for experiments live in the main checkout: `/Users/aggar/omnidiff/runs/...`. Keep any experiment an agent runs under 15 CPU-minutes.
-
-## Wave 1: distillation (Sat 17 to Tue 20)
-
-| id | workstream | owns | done when |
+| layer | package | done on the 31st when | status target |
 |---|---|---|---|
-| D1 | **DMD2 grid mismatch.** DMD2 is best at 2 steps, not at its 4-step training grid, and collapses at 8. Investigate backward simulation (which grid times the student's own samples are noised to) and the student's time-sampling distribution; fix or explain. | `methods/dmd2.py`, `configs/distill/*dmd2*.yaml`, new tests | a test pins the backward-simulation states to the student grid; a short CPU run shows best quality at the trained NFE, or the notes explain why not |
-| D2 | **Reward-regularised DMD2** (scope §4, the G2 thread). Add an optional reward term to DMD2's generator loss: a reward gradient for differentiable rewards, advantage-weighted otherwise. Add a differentiable (torch) path to the toy rewards that need one. | new `methods/dmd2_reward.py` (or an option in `dmd2.py`, coordinated with D1), `reward/rewards.py` torch path, config, tests | a test checks the reward gradient against autograd on a known reward; a toy config trains; notes give reward against precision/recall for 2–3 weights |
-| D3 | **Progressive distillation** for continuous processes (scope §8, not started). Rounds of "1 student step = 2 teacher steps", halving the steps each round; Salimans and Ho target in x0 space. | new `methods/progressive.py`, config, tests | a test checks the target equals two exact teacher DDIM/Euler steps; rounds advance and the grid halves; a toy config trains |
-| D4 | **Discrete consistency for text** (scope §4 `dcd`). Read arXiv 2607.19686 and 2609.33947 and implement a multi-step / multi-mask consistency objective for masked diffusion, compared against `coupled_kd`. | new `methods/dcd.py`, config, tests, `docs/notes/D4.md` with the paper reading | a correctness test of the objective's fixed point; a toy config trains; notes compare it with `coupled_kd` at 1/2/4/8 steps |
-| D5 | **Export (Phase E, CPU half).** `omnidiff export --ckpt ... --out ...` writes a framework-neutral student bundle: weights (`model.safetensors` if `safetensors` is installed, `torch.save` otherwise), `sampler.json` (process, sampler, timesteps, guidance, provenance) and the model config. Add a loader and a round-trip test. | new `distill/export.py`, CLI subcommand, tests, `docs/notes/D5.md` with the schema | the round trip reproduces samples bit-for-bit on CPU; the schema is documented |
-| D7 | **Exact save and resume** for `DistillTrainer`. Checkpoint every role's weights, optimiser and EMA, the RNG states (torch, numpy, generator), the iteration, method state (SDTT round, consistency target net, fake score) and the teacher-pool identity (seed and size, or the pool itself). | `trainer.py` (`save_state` / `resume_from`), method `state_dict` hooks, tests | a test shows that N uninterrupted steps and N/2 + resume + N/2 give bit-identical student weights for kd, dmd2 and sdtt |
-| C1 | **Config coverage.** Distill configs for every method on every process it supports: video flow KD, consistency, rCM; DDPM-image KD and consistency. | new `configs/distill/*.yaml` | the end-to-end config test covers them |
-| ARCH | **Architecture doc**, `docs/ARCHITECTURE.md`: package map, core abstractions, data flows, extension recipes, the invariants the tests enforce. | `docs/ARCHITECTURE.md` | it is accurate against the code, as checked by review |
-| D6 | **Multi-seed harness.** `scripts/distill_toy_report.py --seeds 0 1 2` trains distill runs per seed (teachers fixed), aggregates mean ± std, and writes the same tables. Add `model.time_scale: 10` teacher variants of the image and video flow configs as new configs. Code only: the orchestrator does the long runs. | `scripts/distill_toy_report.py`, new configs | a dry-run test on tiny configs covers the aggregation |
+| core | `diffusion-omni-core` | unchanged contract; any change made for a layer below (for example a causal attention mask) has its own test; README and ARCHITECTURE match the code | done |
+| post-training | `diffusion-omni-posttrain` | unchanged; README toy table re-checked | done |
+| distillation | `diffusion-omni-distill` | 3-seed tables for the default and ts10 teachers in `docs/results/distillation_toy.md`; scope §8 has no "not started" rows; open issues closed or written up as negative results | done (M1, M2) |
+| reward and eval | `diffusion-omni-reward` | R1–R4 merged with all review findings fixed; R3 toy result written; R1 throughput measured | done (M3) |
+| data engine | `diffusion-omni-data` | v0: manifest of shards; exact and near-duplicate removal; reward or oracle threshold filter; codec precompute into shards; `diffusion-omni data build` | v0 |
+| causal / streaming video | new `diffusion-omni-causal` | v0: frame-causal attention for `video_patch`; per-frame noise levels in training (diffusion-forcing style); rolling-window generation past the trained length on `moving_blob` | v0, highest risk |
+| multi-tenant LoRA | new `diffusion-omni-lora` | v0: one base model, N LoRA adapters, per-sample adapter index in one batched forward | v0 |
+| edge deployment | new `diffusion-omni-edge` | v0: export bundle to a `torch.export` program of the unrolled few-step sampler; parity test against eager | v0 |
+| workflow runtime | new `diffusion-omni-workflow` | v0: a small JSON/YAML graph of diffusion-omni nodes (prompts, sample, decode, reward, select) run by a topological executor, with a printed plan | v0 |
+| safety and provenance | new `diffusion-omni-safety` | v0: a provenance manifest per generation (weights hash, config, sampler, seed); a keyed spread-spectrum watermark for pixel outputs with a detector | v0 |
+| real-scale anchor (M4, Phase D) | n/a | a written cost estimate in `docs/plan/PHASE_D_COST.md` for the user to sign off. No GPU run | deferred: needs sign-off and compute |
+| handoff (M5): diffusers / SGLang | n/a | not attempted: serving a toy DiT in SGLang proves nothing, and a real student needs Phase D | deferred until after M4 |
+| pretraining, VAE / tokenizer training | n/a | stays out of scope | out of scope |
 
-Order: D1–D6, C1 and ARCH start in parallel. D2 and D1 both touch DMD2: D2 adds a subclass or a hook and leaves D1's code alone. D7 touches the trainer, so it rebases onto main after D1 and D3. The merge order is D5, D6, C1, ARCH, D3, D1, D2, D4, D7.
+### v0 exit criteria for the new layers (all CPU-testable)
 
-Evaluation provenance (from the design review), which D6 and R4 should follow: freeze the prompt IDs, the teacher checkpoint, the pool seed, the evaluation seeds, the NFE grid and the metric version, and write raw per-seed JSON before aggregating it into markdown.
-
-After the merges (Tue 20 to Wed 21, orchestrator): 3-seed runs of all distill configs on both teacher time scales, then rewrite `docs/results/distillation_toy.md` and close scope §8.
-
-## Wave 2: reward and eval harness (Wed 21 to Thu 22)
-
-| id | workstream | owns | done when |
+| id | layer | exit criteria (tests) | deferred inside the layer |
 |---|---|---|---|
-| R1 | **Batched reward service.** `omnidiff serve-reward --spec ...`: a stdlib HTTP server (no new hard dependencies) that batches requests up to a size or time limit and calls any `REWARDS` entry. Samples go in as base64 npy or text; JSON API plus a Python client. | new `reward/service.py`, `reward/client.py`, CLI, tests | a test starts the server on a free port and checks that batched results equal direct calls, including concurrent clients |
-| R2 | **miles-diffusion adapter.** Read miles_diffusion's reward plug-in interface from its source (github.com/radixark/miles_diffusion) and write an adapter: an importable function or class with the exact signature miles expects, backed by an omnidiff reward or the R1 service. | new `reward/miles.py`, tests with a stub that mirrors the interface, `docs/notes/R2.md` citing the miles files and lines | the stub test passes; the notes quote the interface and the flags miles uses to load it |
-| R3 | **Reward-reliability study.** (a) Agreement: rank correlation between rewards and the dataset oracles over shared samples. (b) Hacking probes: RL against reward A, tracking reward A, a held-out reward B and the oracle, to find where they diverge. Library code plus a script. | new `reward/reliability.py`, `scripts/reward_reliability.py`, tests | the metric code is tested on synthetic data with known correlation; the script runs on CPU in under 15 minutes; notes report the result |
-| R4 | **`omnidiff eval`.** Promote the scorecard into eval suites: an `EVALS` registry; `omnidiff eval --suite ... --ckpt ...` with multi-seed mean ± CI; a stable JSON schema versioned in the output. | `reward/scorecard.py`, new `reward/eval.py`, `core/registry.py` (add `EVALS`), CLI, tests | the existing scorecard tests still pass; a schema test; CI widths shrink with n on a synthetic check |
+| L1 | data engine | an injected exact duplicate and a near-duplicate (random-projection features, cosine above a threshold) are removed and nothing else is; the filter keeps exactly the samples at or above the threshold; precompute then reload reproduces `codec.encode` bit for bit; a manifest built twice from the same inputs is byte-identical | recaptioning (needs a VLM), web-scale sources, a real VAE |
+| L2 | multi-tenant LoRA | a mixed batch over N adapters equals N separate single-adapter forwards (max abs error ≤ 1e-6 in float32); adapter index −1 equals the base model; adapters load from diffusion-omni LoRA checkpoints; a sampling run with mixed adapters matches per-adapter sampling with the same seeds | kernels (punica / S-LoRA style), hot-swap, a server; upstream to SGLang |
+| L3 | edge | `torch.export` of the 1–4 step sampler for an image and a text bundle; exported samples match `load_bundle` samples within 1e-5 on CPU for fixed noise; the program reloads in a fresh process | MLX, Core ML, ExecuTorch, quantisation (optional dependencies and devices; no promise of on-device numbers) |
+| L4 | workflow runtime | a graph result equals the same calls made directly through `Pipeline` and `REWARDS`; cycles, unknown node types and dangling inputs are rejected with clear errors; `--plan` prints the execution order without running | ComfyUI JSON import, a serving plan for SGLang |
+| L5 | safety and provenance | watermark detection rate ≥ 0.99 on watermarked toy images with false-positive rate ≤ 0.01 on clean ones, at PSNR ≥ 40 dB; the provenance manifest hash changes when any input changes and verifies otherwise | concept erasure, robustness to compression and crops, C2PA |
+| L6 | causal video | changing frames after k leaves the model's output for frames up to k bit-identical (causality test); training with per-frame t runs on `moving_blob`; rolling generation of 2x the trained frame count runs, and `direction_acc` on the generated frames is reported | Self-Forcing / causal distillation, KV-cache streaming, real video |
 
-Interface specs, file ownership and JSON schemas for R1–R4: [docs/notes/R-design.md](docs/notes/R-design.md). The miles hook is `async def custom_rm(args, samples, **kwargs) -> list[float]`, loaded with `--custom-rm-path`; R2 must verify it against a pinned miles revision.
+Every new package follows the repo checklist: scope doc in `docs/scope/<layer>.md`, then a package with `diffusion_omni.plugins` and `diffusion_omni.commands` entry points, a toy config, correctness tests and a README row. Core stays torch + numpy + pyyaml; any extra dependency is optional and lives in the new package.
 
-Order: R1–R4 in parallel. R2 depends on R1's client API, so R2 codes against the client interface in R-design.md and the review checks the two match. The merge order is R4, R1, R3, R2.
+**Cut rule.** If a layer has not passed review by the end of Tue 27, it ships as its scope doc plus a status of "not started" in GOAL_AND_PLAN, not as half-built code. L6 is the most likely cut, since it touches the core attention path.
 
-## Friday 23
+## Workstreams
 
-- Orchestrator: final runs, results docs, GOAL_AND_PLAN status, README.
-- Integrator: final merge and push. The full test suite must pass on `main`.
+Owner names refer to the roles in [EXECUTION.md](docs/plan/EXECUTION.md): **impl-S** = Sonnet low effort; **impl-C** = Codex `gpt-5.6-luna`; **mech-H** = Haiku low effort; **review-C** = Codex review, read-only, low effort; **orch** = the orchestrating session; **user** = the repo owner.
+
+| id | workstream | owner | review | done when |
+|---|---|---|---|---|
+| R1f | fix R1: override mode accepts registered reward names only (no `module:object`, no `plugins`); request and sample-count limits enforced; deterministic batching test (no wall-clock asserts) | impl-S | review-C, then escalated (security) | a test shows that an override naming `os:system` or any import path returns 400; all R-design validation rules have tests; the test passes 50 runs in a loop |
+| R2f | fix R2: classify by array rank and the declared modality, not by frame count; cast bfloat16 to float32 before `.npy`; keep `""` as `""` | impl-S | review-C | a test per finding |
+| R3f | finish R3: commit the worktree, move the `datasets.py` change into R3's own files or justify it, run the study | impl-S | review-C | R-design tests (perfect agreement, ties, inverse ranking, shrinking CI); script under 15 CPU-min; `docs/notes/R3.md` with the result |
+| R4f | fix R4: reject NaN (write `null` and count it), deduplicate or reject repeated seeds, validate `-n > 0` and `--nfe` | impl-S | review-C | a test per finding; schema test still passes |
+| E1–E7 | experiments in [BENCHMARK_RUNS.md](docs/plan/BENCHMARK_RUNS.md) | orch | review-C on the results doc | tables in `docs/results/`, raw JSON next to them |
+| S0 | scope docs for L1–L6 (one page each: interface, files, tests, deferred items) | impl-C | review-C, user skims | six files in `docs/scope/` |
+| L1–L6 | the v0 layers above | L1, L4, L5: impl-S; L2, L3, L6: impl-C | review-C; L6 escalated (core change) | exit criteria above |
+| P1 | Phase D cost estimate (model, dataset, GPU type, hours, price, what number is reproduced) | orch | user signs off | `docs/plan/PHASE_D_COST.md` |
+| G1 | `g2_kl_sweep.py`: `--teacher` and `--student` flags, so E4 can use the ts10 teacher | mech-H | review-C | flags default to today's paths; existing output unchanged |
+| DOC | README rewrite against the code; GOAL_AND_PLAN status and layer map; scope §8 rows | mech-H drafts, orch edits | review-C | every command and path in README exists (checked by a script) |
+| RN | rename to `diffusion-omni` (`diffusion_omni.*`, CLI `diffusion-omni` / `domni`), once the user signs off [RENAME.md](docs/plan/RENAME.md) | impl-C | review-C | the verification script in RENAME.md passes |
+| V | final verification: fresh clone, `uv sync`, full tests, `tiny_config` smoke of every config, `--help` of every CLI command | mech-H | orch | a clean log in `docs/plan/VERIFY.md` |
+
+## Merge order
+
+1. R4f, R1f, R3f, R2f (as planned before: R2 codes against R1's client).
+2. G1, S0 (docs and a script flag only).
+3. L1, L5, L2, L3, L4 (independent packages; L4 last because it calls reward and pipeline code).
+4. L6 (touches core; merged last among the layers so a revert is cheap).
+5. DOC, then results docs from the experiments.
+6. RN, only after everything else, so no open branch has to be rebased across the rename.
+7. V on the final `main`.
+
+Each merge: rebase the branch onto `main`, `uv run pytest -q` green on the merged tree, then follow the merge policy in EXECUTION.md.
+
+## Day by day
+
+| date | build | runs (CPU, orch) | gate |
+|---|---|---|---|
+| Sun 18 | plan docs (this file, `docs/plan/*`); user decisions below; start R1f, R2f, R3f, R4f | E1: 3-seed default report (60 student runs), started in the background | user answers the open decisions |
+| Mon 19 | R fixes reviewed by Codex and patched; S0 scope drafts; G1 | E1 continues; E0 sanity score of the video ts10 teacher | R1f escalated review done |
+| Tue 20 | merge R4f, R1f, R3f, R2f; S0 reviewed | E2: ts10 3-seed report (36 runs); E5: R3 study; E6: R1 throughput | 165+ tests green after each merge |
+| Wed 21 | start L1–L6 in parallel worktrees | E3: D2 advantage mode, 3 seeds | |
+| Thu 22 | L1–L6 coding | E4: order study on the ts10 teacher | orch rewrites `docs/results/distillation_toy.md` from E1 and E2 |
+| Fri 23 | L1, L4, L5 into review | rerun anything that failed | scope §8 closed |
+| Sat 24 | L2, L3 into review; patches | | |
+| Sun 25 | merge L1, L5, L2, L3 | | |
+| Mon 26 | L4 merge; L6 into escalated review | E7: layer toy checks (watermark ROC, causal toy run) | |
+| Tue 27 | L6 patches and merge, or cut; P1 cost estimate | | **cut rule applies at end of day** |
+| Wed 28 | DOC: README, GOAL_AND_PLAN, ARCHITECTURE package map | | user signs off P1 or defers it |
+| Thu 29 | RN (rename to `diffusion-omni`) if signed off, else skipped | | rename verification passes |
+| Fri 30 | V: fresh-clone verification; draft issue #2 and #3 updates for the user to post | | |
+| Sat 31 | buffer; final merge per policy | | `main` green, every layer done or deferred in writing |
+
+Slack: Fri 23–Sat 24 and Sat 31 absorb one slipped workstream. If two slip, L6 is cut first, then L4.
+
+## Decisions needed from the user
+
+1. Confirm the standing approval for merging reviewed workstream branches into `main` of this repo (EXECUTION.md, "Commit and push policy"). Without it, every merge waits for an explicit yes.
+2. Sign off the `diffusion-omni` rename plan in [RENAME.md](docs/plan/RENAME.md): the `domni` CLI alias (`dfo` is taken on PyPI), and the one-release compatibility shims. The PyPI name `diffusion-omni` already belongs to an unrelated diff toolkit.
+3. Accept the v0 scope and the cut rule for L1–L6, or move layers to deferred now.
+4. After Tue 27: sign off or defer the Phase D cost estimate.
 
 ## Status
 
 | id | status |
 |---|---|
-| D5, D6 | coded; in review |
-| C1, ARCH | coded by Codex; in review |
-| D1–D4 | coding |
-| D7 | coding (Codex) |
-| R1–R4 | not started |
+| D1–D7, C1, ARCH | merged (`9fe1202`) |
+| R1, R2, R4 | coded; Codex findings open; not merged |
+| R3 | partial, uncommitted in its worktree |
+| video ts10 teacher | trained; not scored |
+| E1–E7 | not run |
+| S0, L1–L6, G1, P1, DOC, RN, V | not started |

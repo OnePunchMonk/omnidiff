@@ -1,15 +1,15 @@
-# Scope: few-step distillation (`omnidiff-distill`)
+# Scope: few-step distillation (`diffusion-omni-distill`)
 
-Status: **v0 in progress**. Phases A and B are implemented; Phase C has started. Written 2026-10-17. The landscape claims below were checked against repos and docs on that date. Papers marked † were seen only as titles or abstracts and haven't been read in full.
+Status: **v0 in progress**. Phases A, B and C methods are merged; Phase D is not started; the CPU half of Phase E (export bundle) is on main. Written 2026-10-17. The landscape claims below were checked against repos and docs on that date. Papers marked † were seen only as titles or abstracts and haven't been read in full.
 
 ## TL;DR
 
 - **The gap is narrower than assumed for continuous image and video.** NVIDIA **FastGen** (Apache-2.0, Jan 2026, about 1k stars) is close to "Miles for distillation". It covers CM, sCM, TCM, MeanFlow, DMD2, f-Distill, LADD, CausVid, Self-Forcing and KD on EDM, DiT, SD, Flux, Qwen-Image, Wan, CogVideoX and Cosmos, with DDP and FSDP2. FastVideo and NVlabs/rcm ship production few-step video students. Another DMD2-for-Wan framework would be redundant.
-- **Three gaps are still open and fit omnidiff well:**
-  1. **Distilling discrete (text) diffusion.** No framework exists, only paper code (SDTT, DUO/DCD, and a burst of 2026 papers). omnidiff already has the masked process next to the continuous ones.
-  2. **Distillation combined with RL.** FastGen has no RL. miles_diffusion has RL but explicitly no DMD2: its docs say teacher roles are "not … a new DMD2 loss", and the trainer has one trainable actor where DMD2 needs two. Nothing trains a few-step student and then RL-tunes it, or puts a reward inside the distillation loss. omnidiff's exact per-step log-probs make few-step students RL-able by construction.
+- **Three gaps are still open and fit diffusion-omni well:**
+  1. **Distilling discrete (text) diffusion.** No framework exists, only paper code (SDTT, DUO/DCD, and a burst of 2026 papers). diffusion-omni already has the masked process next to the continuous ones.
+  2. **Distillation combined with RL.** FastGen has no RL. miles_diffusion has RL but explicitly no DMD2: its docs say teacher roles are "not … a new DMD2 loss", and the trainer has one trainable actor where DMD2 needs two. Nothing trains a few-step student and then RL-tunes it, or puts a reward inside the distillation loss. diffusion-omni's exact per-step log-probs make few-step students RL-able by construction.
   3. **A distillation scorecard.** The central failure mode is diversity and mode collapse (DMD2 at ≤2 steps, the reason rCM and 1.x-Distill exist). There is no standard teacher-relative report of quality, diversity, reward retention and NFE curve. This overlaps the reward/eval layer, so the work counts twice.
-- **Recommendation:** build `omnidiff-distill` v0 around **one interface across text, image and video**. Ship KD, DMD2, consistency/flow-map, and discrete self-distillation as small, test-verified reference implementations. Spend research effort on gap 2 (RL ∘ distill) with gap 1 (text) as the differentiator. Phases A and B are CPU-only. Phase D (a real small model) needs a cost estimate and your sign-off first.
+- **Recommendation:** build `diffusion-omni-distill` v0 around **one interface across text, image and video**. Ship KD, DMD2, consistency/flow-map, and discrete self-distillation as small, test-verified reference implementations. Spend research effort on gap 2 (RL ∘ distill) with gap 1 (text) as the differentiator. Phases A and B are CPU-only. Phase D (a real small model) needs a cost estimate and your sign-off first.
 
 ## 1. Method families
 
@@ -21,7 +21,7 @@ The student regresses the teacher's multi-step ODE solution: knowledge distillat
 
 - Needs: teacher ODE solves, often precomputed noise→sample pairs.
 - Fails: blurry outputs at 1–2 steps, because regressing to the conditional mean averages modes.
-- 2026 state of the art: **PDD**, Parallel Decoding Distillation (NVIDIA, Jul 2026)†. It predicts several denoising steps per forward pass, avoids score-distillation and adversarial losses, reports strong 4–8 NFE results on LTX-2.3, Wan 14B and Qwen-Image, and is already on SGLang's Q4 serving roadmap. Also **TMD**, Transition Matching Distillation (2601.09881)†.
+- 2026 state of the art: **PDD**, Parallel Decoding Distillation (NVIDIA, Jul 2026)†. It predicts several denoising steps per forward pass, avoids score-distillation and adversarial losses, reports strong 4–8 NFE results on video and image models (model list as given by the source, not re-checked), and is already on SGLang's Q4 serving roadmap. Also **TMD**, Transition Matching Distillation (2601.09881)†.
 
 ### 1b. Consistency models
 
@@ -36,7 +36,7 @@ Learn f(x_t, t) → x_0 that is constant along each probability-flow ODE traject
 
 Learn the two-time map X(x_t, t, s) that jumps from t to any s. Consistency models are the special case s = 0, and the instantaneous velocity is the limit s → t.
 
-- Variants: Shortcut models, **MeanFlow** (average velocity, trains from scratch), **Align Your Flow** (NeurIPS 2025, continuous-time flow-map distillation; it proves that consistency models degrade as steps increase while flow maps do not; distils FLUX with LoRA), Mean Flow Distillation (2606.11155)†, and **Flow Map Distillation Without Data** (CVPR 2026, prior samples only: FID 1.45 one-step on ImageNet-256, which also sidesteps teacher/data mismatch).
+- Variants: Shortcut models, **MeanFlow** (average velocity, trains from scratch), **Align Your Flow** (NeurIPS 2025, continuous-time flow-map distillation; it proves that consistency models degrade as steps increase while flow maps do not; the abstract reports text-to-image flow maps beating non-adversarial few-step samplers; the FLUX and LoRA details were not confirmed from the abstract), Mean Flow Distillation (2606.11155)†, and **Flow Map Distillation Without Data** (CVPR 2026, prior samples only; reported FID 1.45 one-step on ImageNet-256 comes from a search summary and is unverified).
 - Needs: a two-time conditioning input (one more embedding), and JVPs for the continuous-time objectives.
 - Why it matters here: one student serves any step count, which is the right shape for "serve at 1, 2, 4 or 8 steps depending on load".
 
@@ -65,20 +65,20 @@ This is the open frontier.
   - OPTD (2608.02942)†: on-policy transition distillation.
   - Trajectory self-distillation (2602.12262)† and temporal self-distillation (2609.15177)†.
   - Scaling Categorical Flow Maps (2605.07820)†: flow maps on the simplex.
-  - Distilled continuous DLMs (2609.04531)†: code in one step.
+  - Distilled continuous DLMs (2609.04531)†: the arXiv v2 is marked withdrawn (2026-09-10); do not rely on it.
   - "Simple DLMs are more effective few-step generators than reported" (2609.33947)†: a baselines warning to read **before** building anything.
-- Note on dLLM "parallel decoding" tricks such as confidence remasking: these are inference heuristics, not distillation. omnidiff can host them as inference-only samplers.
+- Note on dLLM "parallel decoding" tricks such as confidence remasking: these are inference heuristics, not distillation. diffusion-omni can host them as inference-only samplers.
 
 ## 2. Who covers what (2026-10-17)
 
 | | continuous methods | discrete/text | RL in the loop | eval of students | serving handoff | scale |
 |---|---|---|---|---|---|---|
 | **NVIDIA FastGen** | CM, sCM, TCM, MeanFlow, DMD2, f-Distill, LADD, CausVid, Self-Forcing, KD | none | none | scripts only | `.pth` checkpoints | ≥10B, FSDP2 |
-| **FastVideo** | DMD2, sparse distillation (VSA), Self-Forcing | none | none | none | ships HF models; SGLang Diffusion forked from it | Wan 14B, MiniMax-H3 |
+| **FastVideo** | DMD2, sparse distillation (VSA), Self-Forcing | none | none | none | ships HF models; SGLang Diffusion forked from it | MiniMax-H3, FastWan (Wan 14B not confirmed from the README) |
 | **NVlabs/rcm** | rCM, Causal-rCM | none | none | some | checkpoints | Wan 14B |
 | **miles_diffusion** | teacher/ref model roles, custom-loss hooks, **no DMD2** (one trainable actor) | none | Flow-GRPO, DiffusionNFT, SFT | built-in scorers | rollouts served by SGLang | FSDP2 |
-| **SGLang Diffusion** | serves distilled models; Q4-2026 roadmap: PDD, Turbo LoRA on FastH3 V2, distilled LoRAs that survive merging | none | none | quality gate (SSIM/PSNR vs BF16) | is the server | production |
-| **omnidiff (today)** | none | masked process exists | GRPO/DDPO with exact log-probs for all three modalities | none | none | toy, single process |
+| **SGLang Diffusion** | serves distilled models; Q4-2026 roadmap: PDD, Turbo LoRA on FastH3 V2, distilled LoRAs that survive merging | none | none | a quality gate for the lossy tier (metric details not confirmed) | is the server | production |
+| **diffusion-omni (today)** | none | masked process exists | GRPO/DDPO with exact log-probs for all three modalities | none | none | toy, single process |
 
 Sources: [FastGen](https://github.com/NVlabs/FastGen), [FastVideo](https://github.com/hao-ai-lab/FastVideo), [NVlabs/rcm](https://github.com/NVlabs/rcm), [miles_diffusion model roles](https://github.com/radixark/miles_diffusion/blob/main/docs/fsdp_model_roles.md), [SGLang-Diffusion roadmap 2026 Q4](https://github.com/sgl-project/sglang/issues/43313).
 
@@ -94,13 +94,13 @@ Sources: [FastGen](https://github.com/NVlabs/FastGen), [FastVideo](https://githu
 
 ## 4. Proposed v0 scope
 
-### Core changes (in `omnidiff-core`)
+### Core changes (in `diffusion-omni-core`)
 
 1. **Arbitrary timestep sets and one-jump samplers.** `sample(..., timesteps=[1.0, 0.5, 0.0])`, and a `FewStepSampler` that calls a student map directly, f(x_t, t[, s]) → x_s.
 2. **Prediction conversions on each process**: `to_x0(pred, x_t, t)`, `to_score(...)`, and `ode_step(pred, x_t, t, s)` for the deterministic teacher step. DMD needs scores, CD needs teacher ODE steps, and SDTT needs teacher logits after k steps.
 3. **Two-time conditioning** (an `s` embedding) in `Denoiser`, optional and off by default, for flow maps.
 
-### The `omnidiff-distill` package
+### The `diffusion-omni-distill` package
 
 - A `Distiller` interface: `roles` (student, teacher, plus auxiliaries such as fake_score and discriminator), one optimiser and update ratio per trainable role, `loss(batch) -> {role: loss}`, and the `student_sampler()` to export.
 - A `DistillTrainer` with multiple trainable roles, two-time-scale updates, EMA, and a frozen teacher (LoRA-disabled base or a separate copy, same as the RL trainer). This multi-role trainer is the structural thing miles_diffusion lacks.
@@ -115,7 +115,7 @@ Sources: [FastGen](https://github.com/NVlabs/FastGen), [FastVideo](https://githu
 | `sdtt` (self-distillation through time) | text | G1 entry point, simple, and a strong published baseline |
 | `dcd` or multi-mask consistency | text | G1 research, **only after** re-reading 2609.33947 and 2607.19686 |
 
-- A scorecard (`omnidiff-reward` side, G3), computed on the same prompts for teacher@N and student@{1, 2, 4, 8}:
+- A scorecard (`diffusion-omni-reward` side, G3), computed on the same prompts for teacher@N and student@{1, 2, 4, 8}:
   - Teacher-relative quality: a toy Fréchet distance on a small fixed feature net for pixels, teacher NLL for text.
   - Diversity: pairwise distance within prompt, and mode coverage on the toy datasets where the modes are known (the blob dataset has exact colour/position modes).
   - Reward retention.
@@ -144,7 +144,7 @@ Models of 1B+ parameters, FSDP, sparse attention, causal/streaming students (Sel
 
 ### Reading notes: 2609.33947 (abstract only)
 
-- Much of the few-step quality gap in masked DLMs is a sampler artifact. "Modest sampler sharpening", meaning temperature below 1 with no retraining, makes an old MDLM-class model rival newer ones. At 16 steps it beats the default sampler at 1024 steps on generative perplexity.
+- Much of the few-step quality gap in masked DLMs is a sampler artifact. "Modest sampler sharpening", which the abstract describes as mild sampler sharpening with no retraining (we read it as temperature below 1), makes an old MDLM-class model rival newer ones. At 16 steps it beats the default sampler at 1024 steps on generative perplexity.
 - Temperature 1 is generically suboptimal under parallel unmasking, because tokens decoded together lose their dependencies.
 - Per-output metrics can be gamed by a generator with two outputs, so quality and across-output diversity must be scored jointly. The paper calls this GroupEval.
 - What this means here: every text distillation result is compared with a temperature-tuned teacher at the same step count, and reported with coverage and diversity next to validity. The scorecard does this through `variants`.
@@ -166,21 +166,21 @@ Models of 1B+ parameters, FSDP, sparse attention, causal/streaming students (Sel
 
 | item | status | where |
 |---|---|---|
-| process helpers (`q_sample`, `to_x0`, `to_eps`, `ode_step`), explicit grids | done | `omnidiff.core.processes`, `sampling.resolve_timesteps` |
+| process helpers (`q_sample`, `to_x0`, `to_eps`, `ode_step`), explicit grids | done | `diffusion_omni.core.processes`, `sampling.resolve_timesteps` |
 | renoise sampler as an exact Gaussian policy | done | `ContinuousProcess.renoise_transition` |
 | two-time models, math attention for JVP | done | `Denoiser(two_time=True)`, `layers.math_attention` |
-| multi-role trainer, teacher pool, EMA, export with sampler spec | done | `omnidiff.distill.trainer` |
-| `kd`, `dmd2` (+ GAN head), `consistency`, `flow_map`, `sdtt` | done | `omnidiff.distill.methods` |
-| scorecard: FD / precision / recall vs teacher and data, diversity, oracles, reward, latency | done | `omnidiff.reward.scorecard`, dataset `oracle()` |
+| multi-role trainer, teacher pool, EMA, export with sampler spec | done | `diffusion_omni.distill.trainer` |
+| `kd`, `dmd2` (+ GAN head), `consistency`, `flow_map`, `sdtt` | done | `diffusion_omni.distill.methods` |
+| scorecard: FD / precision / recall vs teacher and data, diversity, oracles, reward, latency | done | `diffusion_omni.reward.scorecard`, dataset `oracle()` |
 | RL on few-step students | done; order study with a KL anchor, 3 seeds, in results | `test_renoise_student_is_rl_tunable`, `scripts/g2_kl_sweep.py` |
 | toy results | done (single seed): see [docs/results/distillation_toy.md](../results/distillation_toy.md) | |
 | noise-conditioned text distillation (`coupled_kd`) | done; 4-step validity 0.66 against 0.20 for the tuned teacher on the toy | `methods/coupled_kd.py` |
 | `coupled_kd` with O(L) noise (inverse-CDF uniforms) for real vocabularies | done on the toy (4-step validity 0.64) | `MaskedDiffusion(coupled_noise="uniform")`, `method.noise: uniform` |
 | flow maps that learn long jumps | done: needs a teacher that is smooth in t (`model.time_scale: 10`); 1-step data FD 0.18 against 0.68 | `scripts/flow_map_diagnose.py` |
 | tuned-baseline rows in the scorecard (teacher + sampler/temperature overrides) | done | `run_scorecard(variants=...)`, `--ref-variant` |
-| discrete consistency (DCD / multi-mask) | not started; read 2607.19686 first | |
+| discrete consistency (DCD / multi-mask) | single-mask ablation done (negative result); the multi-mask scheme of 2607.19686 is not implemented | `methods/dcd.py`, `docs/notes/D4.md` |
 | rCM (flow map with `s_mode: zero` + DMD regulariser) | done (toy) | `methods/rcm.py` |
-| progressive distillation rounds for continuous processes | not started | |
+| progressive distillation rounds for continuous processes | done | `methods/progressive.py`, `docs/notes/D3.md` |
 
 ## References
 

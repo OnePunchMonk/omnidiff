@@ -1,4 +1,4 @@
-# omnidiff architecture
+# diffusion-omni architecture
 
 This document describes the code that is currently in the repository. The
 shared unit is a diffusion process: a process owns the state distribution and
@@ -7,37 +7,37 @@ Training, distillation, inference and evaluation reuse those same objects.
 
 ## Package map and dependency direction
 
-`packages/core/src/omnidiff/core` is the foundation. It contains processes,
+`packages/core/src/diffusion_omni/core` is the foundation. It contains processes,
 modality adapters, the DiT model, conditioning, sampling, codecs, prompt
 sources, configuration, registries, checkpoint utilities and the base CLI. It
 depends only on PyTorch, NumPy and PyYAML. The other packages depend on it:
 
 ```text
-omnidiff-data      -> omnidiff-core
-omnidiff-reward    -> omnidiff-core, omnidiff-data
-omnidiff-posttrain -> omnidiff-core, omnidiff-data, omnidiff-reward
-omnidiff-distill   -> omnidiff-core, omnidiff-data, omnidiff-reward
+diffusion-omni-data      -> diffusion-omni-core
+diffusion-omni-reward    -> diffusion-omni-core, diffusion-omni-data
+diffusion-omni-posttrain -> diffusion-omni-core, diffusion-omni-data, diffusion-omni-reward
+diffusion-omni-distill   -> diffusion-omni-core, diffusion-omni-data, diffusion-omni-reward
 ```
 
-- `omnidiff-data` owns `DATASETS` implementations. A dataset supplies
+- `diffusion-omni-data` owns `DATASETS` implementations. A dataset supplies
   `sample(n, rng) -> (x0, cond)`; the shipped datasets are synthetic blobs,
-  moving blobs and toy text lines (`packages/data/src/omnidiff/data/datasets.py`).
-- `omnidiff-reward` owns decoded-sample rewards, NumPy sample-set metrics and
+  moving blobs and toy text lines (`packages/data/src/diffusion_omni/data/datasets.py`).
+- `diffusion-omni-reward` owns decoded-sample rewards, NumPy sample-set metrics and
   the checkpoint scorecard (`reward/rewards.py`, `metrics.py`, `scorecard.py`).
   It depends on core and data, but does not train models.
-- `omnidiff-posttrain` owns supervised denoising training and online RL.
+- `diffusion-omni-posttrain` owns supervised denoising training and online RL.
   `SFTTrainer` calls a process's `training_loss`; `RLTrainer` runs trajectories,
   scores decoded samples, and applies GRPO or DDPO (`posttrain/sft.py`,
   `posttrain/rl/trainer.py`).
-- `omnidiff-distill` owns the multi-role distillation trainer and registered
+- `diffusion-omni-distill` owns the multi-role distillation trainer and registered
   methods. It uses core models/processes/sampling plus data and reward metrics
   (`distill/trainer.py`, `distill/methods/`).
 
-The packages are separate distributions under the shared `omnidiff` namespace.
+The packages are separate distributions under the shared `diffusion-omni` namespace.
 Components are found at runtime through registries and installed entry points,
 not through direct imports between package implementations. Data, reward,
-posttrain and distill declare `omnidiff.plugins`; posttrain, distill and reward
-also declare `omnidiff.commands`. Core declares no `omnidiff.plugins` entry
+posttrain and distill declare `diffusion_omni.plugins`; posttrain, distill and reward
+also declare `diffusion_omni.commands`. Core declares no `diffusion_omni.plugins` entry
 point.
 
 ## Core abstractions
@@ -138,9 +138,9 @@ receives all available context, and explicit spec fields win. `denoiser()` adds
 `core/build.py` assembles codec, process, model and prompts, offering
 `sample_shape`, `codec`, `mask_id` and `vocab_size` as context.
 
-`discover_plugins()` loads installed `omnidiff.plugins` entry points, while
+`discover_plugins()` loads installed `diffusion_omni.plugins` entry points, while
 config `plugins:` imports additional modules. The base CLI loads
-`omnidiff.commands` entry points; each entry point is a
+`diffusion_omni.commands` entry points; each entry point is a
 `register(subparsers)` function. Core provides `sample` and `list`;
 the other packages add `sft`, `rl`, `distill` and `scorecard`.
 
@@ -278,7 +278,7 @@ records teacher/method/guidance provenance.
   and sampler, implement `loss`; add `setup`, `schedule`, `after_update` or
   `student_spec` only when needed. See `methods/dmd2.py` and `methods/base.py`.
 - **CLI command:** expose `register(subparsers)` from a package module and declare an
-  `omnidiff.commands` entry point in that package's `pyproject.toml`; use
+  `diffusion_omni.commands` entry point in that package's `pyproject.toml`; use
   `add_config_command` for standard YAML commands.
 
 ## Test-enforced invariants
