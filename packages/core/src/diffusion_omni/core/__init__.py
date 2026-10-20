@@ -7,6 +7,7 @@ from .config import load_config
 from .nn import adapters, backbones, conditioners, denoiser  # noqa: F401
 from .pipeline import Generation, Pipeline
 from .processes import flow, gaussian, masked  # noqa: F401
+from .reference import Parity, parity, reference_sample
 from .sampling import Trajectory, predict, sample, step
 
 __version__ = "0.1.0"

@@ -10,7 +10,7 @@ Scope: [docs/scope/HARD_SCOPE.md](docs/scope/HARD_SCOPE.md)
 
 | package | what is on `main` | status |
 |---|---|---|
-| [core](packages/core/README.md) | processes (masked, Gaussian, flow), DiT, adapters, CFG, LoRA, sampling, `Pipeline`, `diffusion-omni sample`, `diffusion-omni list` | v0.1 |
+| [core](packages/core/README.md) | processes (masked, Gaussian, flow), DiT, adapters, CFG, LoRA, sampling, reference samplers, `Pipeline`, `diffusion-omni sample`, `diffusion-omni list` | v0.1 |
 | [posttrain](packages/posttrain/README.md) | `diffusion-omni sft`, `diffusion-omni rl` (GRPO, DDPO) | v0.1 |
 | [distill](packages/distill/README.md) | `diffusion-omni distill`, `diffusion-omni export`; 10 methods (kd, dmd2, dmd2_reward, consistency, flow_map, rcm, progressive, sdtt, coupled_kd, dcd) | v0 |
 | [reward](packages/reward/README.md) | toy rewards, set metrics, `diffusion-omni scorecard` | seed |
@@ -65,6 +65,7 @@ build.py         config -> Components (codec, process, model, prompts, sampling)
 processes/       gaussian.py, flow.py, masked.py (forward noising, training loss, policy step, step KL)
 nn/              adapters (tokens, image_patch, video_patch), DiT backbone, conditioners, denoiser, LoRA
 sampling.py      predict (with CFG), step, sample -> Trajectory
+reference.py     reference_sample (Heun ODE / ancestral, float64), parity: ground truth for faster samplers
 codecs.py        pixel, text (byte tokenizer)
 prompts.py       none, class, text
 pipeline.py      inference API (Pipeline)
@@ -78,7 +79,7 @@ Setup and tests:
 
 ```bash
 uv sync                    # installs every workspace package in editable mode into .venv
-uv run pytest              # 165 tests, about 10 seconds on CPU
+uv run pytest              # 174 tests, about 10 seconds on CPU
 uv run diffusion-omni list       # every component registered by the installed packages
 uv run diffusion-omni --help     # all subcommands
 ```

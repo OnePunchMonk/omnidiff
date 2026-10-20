@@ -8,14 +8,15 @@ Processes (the forward and reverse diffusion steps, each with an exact log-proba
 
 ## Public API
 
-From `diffusion_omni.core`: `Pipeline`, `Generation`, `Components`, `build`, `load_config`, `Trajectory`, `predict`, `sample`, `step`.
+From `diffusion_omni.core`: `Pipeline`, `Generation`, `Components`, `build`, `load_config`, `Trajectory`, `predict`, `sample`, `step`, `reference_sample`, `parity`, `Parity`.
 
 | module | names |
 |---|---|
-| `pipeline.py` | `Pipeline.from_config(cfg)`, `Pipeline.from_checkpoint(path, device=None, overrides=())`, `Pipeline.generate(prompts, n, num_steps, guidance_scale, seed, return_trajectory, timesteps)`; `Generation(samples, prompts, raw, trajectory)` |
+| `pipeline.py` | `Pipeline.from_config(cfg)`, `Pipeline.from_checkpoint(path, device=None, overrides=())`, `Pipeline.generate(prompts, n, num_steps, guidance_scale, seed, return_trajectory, timesteps)`, `Pipeline.reference(prompts, n, num_steps, guidance_scale, seed, dtype)`; `Generation(samples, prompts, raw, trajectory)` |
 | `build.py` | `build(cfg, device=None) -> Components`; `Components(cfg, device, sample_shape, codec, process, model, prompts, sampling, context)` |
 | `config.py` | `load_config(path, overrides)`, `apply_overrides(cfg, overrides)`, `parse_value`, `save_config`, `from_dict`, `SamplingConfig` |
 | `sampling.py` | `sample(model, process, shape, cond, num_steps, guidance_scale, generator, keep_trajectory, timesteps)`, `step(...)`, `predict(...)`, `resolve_timesteps(...)`, `Trajectory` |
+| `reference.py` | `reference_sample(model, process, shape, cond, num_steps=500, guidance_scale, generator, device, dtype=float64, x_init, timesteps)`: probability-flow ODE with Heun (gaussian, flow) or ancestral (masked) at high NFE, ignoring the process's `sampler`; `parity(candidate, reference, atol, min_match) -> Parity(max_abs, rmse, match, passed)` |
 | `processes/base.py` | `DiffusionProcess` (abstract), `ContinuousProcess`, `Transition`, `reduce`, `gaussian_log_prob` |
 | `processes/flow.py` | `FlowMatching` (`process.type: flow`) |
 | `processes/gaussian.py` | `GaussianDiffusion` (`process.type: gaussian`) |

@@ -10,6 +10,7 @@ import torch
 
 from .build import Components, build
 from .config import apply_overrides, load_config
+from .reference import reference_sample
 from .sampling import Trajectory, sample
 from .utils import CONFIG, load_weights, make_generator
 
@@ -59,3 +60,18 @@ class Pipeline:
         traj = out if return_trajectory else None
         x = traj.samples if return_trajectory else out
         return Generation(c.codec.decode(x), list(prompts), x, traj)
+
+    @torch.no_grad()
+    def reference(self, prompts: list | None = None, n: int | None = None, num_steps: int = 500,
+                  guidance_scale: float | None = None, seed: int = 0, dtype=torch.float64) -> Generation:
+        """Ground-truth samples from ``reference_sample``. For gaussian and flow, the same ``seed`` gives ``generate`` the same prior."""
+        c = self.c
+        if prompts is None:
+            prompts = c.prompts.sample(n or 1, np.random.default_rng(seed))
+        cond = c.prompts.encode(prompts, c.device)
+        x = reference_sample(
+            c.model, c.process, (len(prompts), *c.sample_shape), cond, num_steps,
+            c.sampling.guidance_scale if guidance_scale is None else guidance_scale,
+            generator=make_generator(seed, c.device), dtype=dtype,
+        )
+        return Generation(c.codec.decode(x), list(prompts), x)
